@@ -18,18 +18,27 @@ RLkit/
          ├─ .claude/skills/             Claude Code向け
          ├─ .gemini/skills/             Gemini CLI向け
          ├─ .opencode/skills/           OpenCode向け
+         ├─ src/research/               研究内で蓄積する共通処理
+         │  ├─ __init__.py
+         │  └─ methods.py               手法・前処理・指標など（実装に応じて追加）
+         ├─ experiments/
+         │  └─ cycle-001/e1/
+         │     ├─ experiment.py         条件設定とsrcの呼出しを中心とする入口
+         │     └─ experiment.json       計画と使用した共通srcの版
          ├─ imports/                   インポートした場合のみ
          │  ├─ MANIFEST.json           元の場所・選択ファイル・サイズ・ハッシュ
          │  ├─ CONTEXT.md              既存方針・進捗・未解決事項の整理
          │  └─ source/                 選択した資料の複製（元の相対構造を保持）
          ├─ .rlk/
          │  ├─ state.sqlite3           方針・回答・状態・作業・試行・承認の正本
+         │  ├─ source-versions/         実装受理時の共通srcの保存版
          │  ├─ jobs/
          │  │  └─ 8/                   作業ID（固定番号ではない）
          │  │     └─ attempt-1/         再試行はattempt-2へ
          │  │        ├─ prompt.md      AI作業の場合の指示
          │  │        ├─ response.json  AI作業の場合の応答
          │  │        ├─ code/experiment.py   数値実験の場合の実装
+         │  │        ├─ code/src/            その実験が使用する共通srcの固定版
          │  │        ├─ preregistration.json 計画・コード・seed・環境の記録
          │  │        ├─ progress.json       seed完了時点の進捗
          │  │        ├─ analysis.json       集計結果
@@ -56,6 +65,21 @@ AI作業と数値実験は別の作業IDを持つ。図のattempt-1に全ファ�
 再試行で以前の結果を上書きしない。importsのコードは資料として保存し、取り込み時に実行しない。
 
 .researchはGitの対象外。研究のバックアップにはこのフォルダ全体を保存する。
+
+## 共通処理の蓄積
+
+srcは研究フォルダ内の共通ライブラリ。RLkit本体のsrc/research_loop_kitとは別の場所。
+前処理・計算手法・評価指標などを蓄積し、experiments側は条件設定とimportによる呼出しを中心にする。
+同じ研究の次サイクルは既存のsrcを参照する。研究の分岐でもsrcのコピーを引き継ぎ、以降は独立して変更する。
+
+実装ジョブは開始時の共通srcと変更案から実行版を固定する。事前登録では入口と共通src全体のハッシュを記録し、
+実行後・報告前にも照合する。研究の最新srcが後で変わっても、既に登録された実験の実行内容は変わらない。
+並列作業で同じファイルへの異なる変更が競合すると停止する。同一変更や別ファイルの追加は両立する。
+
+srcの構文は提出時に検査するが、反映時点で研究上の正しさまで保証するものではない。
+実行・レビューで検証する。ソース更新とDB確定は原子的ではないため、保存中の障害時はsrc・実装ジョブ・
+保存版を照合して復旧する。DBに記録された実装と実行試行のコードが、実測の根拠となる。
+experiments内の入口を手動で起動すると環境・使用版が変わり得るため、通常はAgentに実行を依頼する。
 
 ## 既存研究を取り込む
 

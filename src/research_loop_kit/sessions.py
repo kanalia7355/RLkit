@@ -12,6 +12,7 @@ from .engine import Engine
 from .setup import initialize
 from .store import digest
 from .importing import preview, validate_context, copy_snapshot, no_links
+from .shared_source import read_sources
 
 
 ACTIONS = {
@@ -252,6 +253,11 @@ class Sessions:
                 initialize(directory, cfg)
                 engine = Engine(directory)
                 if source:
+                    shared = read_sources(self.root / source["path"])
+                    for relative, content in shared.items():
+                        target = directory / "src" / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_text(content, encoding="utf-8")
                     with engine.store.transaction() as research_db:
                         state = engine.store.state(research_db)
                         state["answers"] = {k: v for k, v in source["state"]["answers"].items()
@@ -261,6 +267,7 @@ class Sessions:
                                                    "answers": source["state"]["answers"],
                                                    "deepening": source["state"].get("deepening"),
                                                    "history": source["state"]["history"]}
+                        state["prior_research"]["shared_source_hash"] = digest(shared)
                         if source["state"].get("imported_research"):
                             state["prior_research"]["imported_research"] = source["state"]["imported_research"]
                         if action in ("revise", "reselect"):

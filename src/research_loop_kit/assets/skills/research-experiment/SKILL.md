@@ -6,6 +6,8 @@ description: 承認済みの研究計画に沿って実験コードを実装し�
 # 実験を実装する
 
 作業票のexperimentとproposal_hashを確認する。
+実装前に[共通srcと短い入口の契約](references/shared-source.md)を読む。
+再利用する処理は研究内srcに蓄積し、experiment.pyは条件設定と共通処理の呼出しを中心にする。
 experiment.pyは --seed / --output を受け取り、seed/baseline/treatmentをJSONへ保存する。
 両条件で主指標の定義・データ分割・計算予算を揃え、変更因子の効果が切り分けられるようにする。
 設定値が実際の計算経路へ渡っているか、小さな入力で確認する。

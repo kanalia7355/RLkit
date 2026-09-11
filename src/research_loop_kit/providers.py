@@ -41,7 +41,7 @@ def stop_tree(process):
     process.wait()
 
 
-def process_run(argv, cwd, stdout, stderr, timeout):
+def process_run(argv, cwd, stdout, stderr, timeout, env_overrides=None):
     """シェル解釈を使わず、タイムアウト時には子プロセスも停止する。"""
     executable = shutil.which(argv[0])
     if executable is None:
@@ -50,6 +50,7 @@ def process_run(argv, cwd, stdout, stderr, timeout):
     if os.name == "nt" and Path(executable).suffix.lower() in (".cmd", ".bat", ".ps1"):
         raise LoopError("Windowsのシェルshimは直接起動しません。custom_commandにnode.exeとCLIのJS入口を配列で設定するか、activeモードを使ってください")
     env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    env.update(env_overrides or {})
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
     with Path(stdout).open("wb") as out, Path(stderr).open("wb") as err:
         process = subprocess.Popen([executable, *argv[1:]], cwd=cwd, stdout=out, stderr=err,

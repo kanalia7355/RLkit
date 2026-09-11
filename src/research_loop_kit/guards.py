@@ -6,6 +6,7 @@ import statistics
 
 from .config import LoopError, number, read_json
 from .store import digest
+from .shared_source import read_code
 
 
 def inspect_code(sources):
@@ -53,7 +54,7 @@ def verify_evidence(root, entry):
         manifest = read_json(directory / "preregistration.json")
         if manifest != result["manifest"] or manifest["proposal_hash"] != entry["proposal_hash"]:
             raise LoopError("事前登録が集計・採用方針と一致しません")
-        sources = {p.name: p.read_text(encoding="utf-8") for p in (directory / "code").glob("*.py")}
+        sources = read_code(directory / "code")
         if digest(sources) != manifest["code_hash"]:
             raise LoopError("事前登録後に実験コードが変更されています")
         values = result["values"]

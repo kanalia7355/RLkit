@@ -13,6 +13,8 @@ def initialize(root, overrides=None):
     if root.exists() and any(root.iterdir()):
         raise LoopError("初期化先には空のフォルダを指定してください。既存の設定は上書きしません")
     root.mkdir(parents=True, exist_ok=True)
+    write_new(root / "src/research/__init__.py", '"""研究内で共有する処理。"""\n')
+    (root / "experiments").mkdir()
     assets = files("research_loop_kit") / "assets"
     instructions = (assets / "AGENT_GUIDE.md").read_text(encoding="utf-8")
     write_new(root / "AGENT_GUIDE.md", instructions)

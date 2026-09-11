@@ -2,21 +2,28 @@
 
 CODE = '''import argparse
 import json
-import random
 from pathlib import Path
+from research.quadratic import compare
 
 p = argparse.ArgumentParser()
 p.add_argument("--seed", type=int, required=True)
 p.add_argument("--output", required=True)
 a = p.parse_args()
-rng = random.Random(a.seed)
-x = rng.uniform(-5, 5)
-baseline = x * x
-for _ in range(8):
-    x -= RATE * 2 * x
-treatment = x * x
+baseline, treatment = compare(a.seed, rate=RATE, steps=8)
 Path(a.output).write_text(json.dumps({"seed": a.seed, "baseline": baseline,
                                     "treatment": treatment}), encoding="utf-8")
+'''
+
+SHARED_CODE = '''import random
+
+
+def compare(seed, *, rate, steps):
+    rng = random.Random(seed)
+    x = rng.uniform(-5, 5)
+    baseline = x * x
+    for _ in range(steps):
+        x -= rate * 2 * x
+    return baseline, x * x
 '''
 
 ANSWERS = {
@@ -70,6 +77,7 @@ def respond(job, state):
     if kind == "implement":
         index = int(payload["experiment"]["id"][1:])
         return {"files": {"experiment.py": CODE.replace("RATE", str(0.05 * index))},
+                "shared_files": {} if payload.get("shared_sources", {}).get("research/quadratic.py") == SHARED_CODE else {"research/quadratic.py": SHARED_CODE},
                 "notes": "標準ライブラリだけで計算する動作実証実装"}
     if kind == "review":
         return {"experiments": [{"id": x["id"], "assessment": "supported" if x.get("threshold_met") else "inconclusive",

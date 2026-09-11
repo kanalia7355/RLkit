@@ -61,6 +61,10 @@ def verify(archive_path, wheel_path):
             raise ValueError("独立環境でデモが完了していません")
         if not (root / "demo/reports/MEETING_REPORT-002.md").is_file():
             raise ValueError("報告会用Markdownがありません")
+        if not (root / "demo/src/research/quadratic.py").is_file() or not (root / "demo/experiments/cycle-002/e1/experiment.py").is_file():
+            raise ValueError("共通srcまたは実験の入口がありません")
+        if len({r["manifest"]["shared_source_hash"] for h in state["history"] for r in h["results"]}) != 1:
+            raise ValueError("デモの共通処理が実験間で再利用されていません")
         if not (root / "real-project/.agents/skills/research-report/references/report-structure.md").is_file():
             raise ValueError("参照資料が研究初期化で配布されていません")
         candidate = state["skill_candidates"][0]
@@ -78,7 +82,7 @@ def verify(archive_path, wheel_path):
                           "clone_entry_without_install": "PASS",
                           "cycles": len(state["history"]), "runs": state["runs"],
                           "new_project_init": "PASS", "meeting_report": "PASS",
-                          "approved_skill_evolution": "PASS"}, ensure_ascii=False))
+                          "approved_skill_evolution": "PASS", "shared_source_reuse": "PASS"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from .store import Store, digest, write_new
 from .guards import inspect_code, verify_evidence, verify_reports
 from .reporting import supporting_documents
 from . import evolution
+from . import shared_source
 
 
 def required(obj, keys):
@@ -136,9 +137,10 @@ class Engine:
 
     def _implement(self, db, state):
         state["phase"] = "implementing"
+        shared = shared_source.read_sources(self.root)
         for experiment in state["proposal"]["experiments"]:
             self.store.job(db, state["cycle"], "implement", {"experiment": experiment,
-                                                            "proposal_hash": state["proposal_hash"]})
+                                                            "proposal_hash": state["proposal_hash"], "shared_sources": shared})
 
     def pause(self):
         with self.store.transaction() as db:
@@ -313,6 +315,7 @@ class Engine:
                 except SyntaxError as exc:
                     raise LoopError(f"実装の構文エラー: {exc}") from exc
             result["code_audit"] = inspect_code(files)
+            shared_source.prepare(self.root, job, result)
         elif kind == "review":
             reviews = result.get("experiments")
             measured = {x["id"]: x for x in job["payload"]["results"]}
@@ -342,6 +345,8 @@ class Engine:
                 raise LoopError("作業ID・token・実行状態が一致しません（再送も拒否します）")
             self.validate_result(job, result, state)
             if job["kind"] != "skill_build":
+                if job["kind"] == "implement":
+                    shared_source.publish(self.root, job, result)
                 self._finish(db, state, job, result)
                 return
         # 承認済みスキルのテストはDBロックの外で実行する。
@@ -488,13 +493,17 @@ class Engine:
         experiment = job["payload"]["experiment"]
         implementation = job["payload"]["implementation"]
         code_dir = directory / "code"
-        for name, code in implementation["files"].items():
+        sources = shared_source.code_files(implementation)
+        for name, code in sources.items():
             write_new(code_dir / name, code)
         manifest = {"experiment": experiment, "proposal_hash": job["payload"]["proposal_hash"],
-                    "code_hash": digest(implementation["files"]), "seeds": cfg["seeds"],
+                    "code_hash": digest(sources), "seeds": cfg["seeds"],
                     "python": sys.version, "platform": platform.platform(), "started": time.time(),
                     "job_id": job["id"], "attempt": job["attempt"]}
-        manifest["code_audit"] = inspect_code(implementation["files"])
+        manifest["code_audit"] = inspect_code(sources)
+        if "shared_source_hash" in implementation:
+            manifest["shared_source_hash"] = implementation["shared_source_hash"]
+            manifest["experiment_path"] = implementation["experiment_path"]
         write_new(directory / "preregistration.json", dump(manifest))
         values = []
         for seed in cfg["seeds"]:
@@ -517,7 +526,8 @@ class Engine:
             start = time.monotonic()
             process_run([sys.executable, str(code_dir / "experiment.py"), "--seed", str(seed), "--output", str(output)],
                         run_dir, run_dir / "stdout.log", run_dir / "stderr.log",
-                        min(cfg["run_timeout_seconds"], remaining))
+                        min(cfg["run_timeout_seconds"], remaining),
+                        env_overrides={"PYTHONPATH": str(code_dir / "src"), "PYTHONDONTWRITEBYTECODE": "1"})
             metrics = read_json(output)
             if not isinstance(metrics, dict) or set(metrics) != {"seed", "baseline", "treatment"}:
                 raise LoopError("測定値の形式はseed/baseline/treatmentだけのオブジェクトです")
@@ -535,7 +545,7 @@ class Engine:
             (directory / "progress.json").write_text(dump(progress) + "\n", encoding="utf-8")
             with self.store.transaction() as db:
                 self.store.event(db, "seed_completed", {"id": job["id"], "attempt": job["attempt"], **progress})
-        after_code = {name: (code_dir / name).read_text(encoding="utf-8") for name in implementation["files"]}
+        after_code = shared_source.read_code(code_dir)
         if digest(after_code) != manifest["code_hash"]:
             raise LoopError("実行中に事前登録したコードが変更されました")
         sign = 1 if experiment["direction"] == "maximize" else -1
