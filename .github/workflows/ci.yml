@@ -1,0 +1,19 @@
+name: 独立パッケージ検証
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install .
+      - run: python -m unittest discover -s tests -v
+      - run: python -m research_loop_kit demo workspaces/ci-demo --cycles 2
+      - run: python -m pip wheel . --no-deps --wheel-dir dist
+      - run: python tools/export_project.py --output dist/source.zip

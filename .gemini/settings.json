@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{
+        "name": "research-session-entry",
+        "type": "command",
+        "command": "python \"${GEMINI_PROJECT_DIR}/agent.py\" hook --provider gemini",
+        "timeout": 15000
+      }]
+    }]
+  }
+}

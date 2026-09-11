@@ -1,0 +1,19 @@
+{
+  "name": "自分の研究",
+  "backend": "active",
+  "candidate_count": 8,
+  "proposal_workers": 4,
+  "experiments_per_cycle": 2,
+  "max_parallel_agents": 2,
+  "max_parallel_experiments": 2,
+  "deep_questions": 5,
+  "seeds": [11, 22, 33, 44, 55],
+  "max_cycles": 3,
+  "max_agent_calls": 50,
+  "max_runs": 40,
+  "max_attempts": 2,
+  "max_wall_seconds": 7200,
+  "agent_timeout_seconds": 900,
+  "run_timeout_seconds": 300,
+  "autonomy": "review_each_cycle"
+}

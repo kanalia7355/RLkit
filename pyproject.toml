@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-loop-kit"
+version = "0.4.0"
+description = "対話から始める、エージェント非依存の研究・実験ループ"
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = []
+
+[project.scripts]
+rlk = "research_loop_kit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+research_loop_kit = ["assets/*.md", "assets/skills/*/SKILL.md", "assets/skills/*/references/*.md"]
