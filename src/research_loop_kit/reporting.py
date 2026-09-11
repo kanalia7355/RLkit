@@ -97,4 +97,12 @@ def supporting_documents(state):
         "SKILL_CANDIDATES.md": candidates, "ISSUES.md": issues}.items()}
     for entry in state["history"]:
         documents[f"MEETING_REPORT-{entry['cycle']:03d}.md"] = meeting_report(state, entry)
+    imported = state.get("imported_research")
+    if imported:
+        lines = ["# 既存研究のインポート", "", imported["summary"], "",
+                 "取り込んだ結果は未再検証の過去資料です。新しい実験の測定結果とは分けて扱います。", "",
+                 f"取り込み元: `{imported['source']}`", "", "[取り込み記録](../imports/MANIFEST.json)", "",
+                 "## 保存した資料", ""]
+        lines += [f"- [{f['path']}](../{f['snapshot']}) / {f['bytes']} bytes / SHA256 `{f['sha256']}`" for f in imported["files"]]
+        documents["IMPORT_REPORT.md"] = "\n".join(lines) + "\n"
     return documents

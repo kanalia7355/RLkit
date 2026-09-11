@@ -11,6 +11,7 @@ from .config import LoopError, QUESTIONS, dump, make_config, nonempty
 from .engine import Engine
 from .setup import initialize
 from .store import digest
+from .importing import preview, validate_context, copy_snapshot, no_links
 
 
 ACTIONS = {
@@ -125,6 +126,8 @@ class Sessions:
                                             for j in state["jobs"] if j["status"] in ("pending", "running", "failed")],
                              "choices": choices})
         menu = {"kind": "resume" if projects else "setup", "projects": projects, "last_selection": last_selection,
+                "start_options": [{"id": "new", "label": "新しい研究を始める"},
+                                  {"id": "import", "label": "既存の研究・実験を取り込む"}],
                 "opening": "前回の方針と進捗を確認して、今回の進め方を選びましょう。" if projects else
                            "研究を始めましょう。どんなテーマに関心がありますか？ 特に気になっていることも教えてください。",
                 "first_questions": dict(list(QUESTIONS.items())[:2]) if not projects else {},
@@ -143,6 +146,45 @@ class Sessions:
         with self.db(create=True) as db:
             db.execute("INSERT INTO sessions VALUES (?,?,?)", (session["id"], time.time(), dump(session)))
         return dict(menu, session_id=session["id"])
+
+    def import_study(self, session_id, source, paths, expected_hash, name, context, settings=None):
+        nonempty(name, "取り込み後の研究名")
+        validate_context(context)
+        config = make_config(dict(settings or {}, name=name))
+        inspection = preview(source, paths)
+        if inspection["hash"] != expected_hash:
+            raise LoopError("取り込み対象がプレビューと一致しません。再確認してください")
+        with self.db() as db:
+            session = self._read(db, session_id)
+            if session["status"] != "awaiting_choice":
+                raise LoopError("新しいセッションで取り込みを選んでください")
+            for parent in (self.home, self.home / "import-staging", self.home / "projects"):
+                parent.mkdir(parents=True, exist_ok=True)
+                no_links(parent)
+            identifier = "study-" + uuid.uuid4().hex[:12]
+            staging = self.home / "import-staging" / identifier
+            destination = self.home / "projects" / identifier
+            initialize(staging, config)
+            copy_snapshot(staging, inspection, context)
+            engine = Engine(staging)
+            with engine.store.transaction() as research_db:
+                state = engine.store.state(research_db)
+                state["answers"] = context["answers"]
+                state["imported_research"] = {"summary": context["summary"], "source": inspection["source"],
+                    "manifest": "imports/MANIFEST.json", "context": "imports/CONTEXT.md", "hash": inspection["hash"],
+                    "files": [dict(f, snapshot="imports/source/" + f["path"]) for f in inspection["files"]],
+                    "verification": "未再実行・過去資料として取り込み"}
+                engine.store.save(research_db, state)
+                engine.store.event(research_db, "research_imported", state["imported_research"])
+            # 資料コピー完了前の研究を通常の研究一覧へ公開しない。
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            staging.rename(destination)
+            path = destination.relative_to(self.root).as_posix()
+            selection = {"action": "import", "project_id": digest(path)[:16], "path": path, "mode": "work"}
+            session.update(status="selected", selection=selection)
+            db.execute("UPDATE sessions SET body=? WHERE id=?", (dump(session), session_id))
+        Engine(destination).export()
+        return dict(selection, session_id=session_id, next_step="取り込み内容と未回答項目を確認し、次の実験方針を提案する。既存コードは自動実行しない。")
 
     @staticmethod
     def _read(db, session_id):
@@ -219,6 +261,8 @@ class Sessions:
                                                    "answers": source["state"]["answers"],
                                                    "deepening": source["state"].get("deepening"),
                                                    "history": source["state"]["history"]}
+                        if source["state"].get("imported_research"):
+                            state["prior_research"]["imported_research"] = source["state"]["imported_research"]
                         if action in ("revise", "reselect"):
                             state.update(phase="planning", cycle=1, candidates=selected,
                                          deepening=source["state"].get("deepening"))

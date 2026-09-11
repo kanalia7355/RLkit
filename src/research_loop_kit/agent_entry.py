@@ -9,6 +9,7 @@ import sys
 from .cli import main as loop_main
 from .config import LoopError, dump, read_json
 from .sessions import Sessions
+from .importing import preview
 
 
 def hook(root, provider, payload):
@@ -34,6 +35,17 @@ def main(root, argv=None):
     parser = argparse.ArgumentParser(description="現在のAI Agentが扱う研究セッションの入口")
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("open")
+    inspect = sub.add_parser("import-preview")
+    inspect.add_argument("--source", required=True)
+    inspect.add_argument("--files", nargs="+", required=True)
+    importing = sub.add_parser("import-study")
+    importing.add_argument("session")
+    importing.add_argument("--source", required=True)
+    importing.add_argument("--files", nargs="+", required=True)
+    importing.add_argument("--hash", required=True)
+    importing.add_argument("--name", required=True)
+    importing.add_argument("--context", required=True)
+    importing.add_argument("--settings")
     h = sub.add_parser("hook")
     h.add_argument("--provider", choices=("claude", "gemini"), required=True)
     choose = sub.add_parser("select")
@@ -52,7 +64,12 @@ def main(root, argv=None):
     args = parser.parse_args(argv)
     hub = Sessions(root)
     try:
-        if args.action == "hook":
+        if args.action == "import-preview":
+            result = preview(args.source, args.files)
+        elif args.action == "import-study":
+            result = hub.import_study(args.session, args.source, args.files, args.hash, args.name,
+                                      read_json(args.context), read_json(args.settings) if args.settings else None)
+        elif args.action == "hook":
             payload = json.load(sys.stdin)
             if not isinstance(payload, dict):
                 raise LoopError("hook入力はJSONオブジェクトです")
