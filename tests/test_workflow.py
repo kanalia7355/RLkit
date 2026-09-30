@@ -2,7 +2,9 @@
 
 import copy
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -193,6 +195,25 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(LoopError, "stop_policy"):
             Engine._check_plan({"payload": {"require_stop_policy": True}}, plan, state)
         Engine._check_plan({"payload": {}}, plan, state)
+        result = respond({"kind": "implement", "payload": {"experiment": plan["experiments"][0]}}, state)
+        directory = self.root / "legacy-execution"
+        directory.mkdir()
+        for name, text in result["shared_files"].items():
+            path = directory / "src" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        code = directory / "experiment.py"
+        code.write_text(result["files"]["experiment.py"], encoding="utf-8")
+        output = directory / "metrics.json"
+        subprocess.run(
+            [sys.executable, str(code), "--seed", "999", "--output", str(output)],
+            env=dict(os.environ, PYTHONPATH=str(directory / "src")),
+            check=True,
+            timeout=10,
+        )
+        metrics = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(metrics["seed"], 999)
+        self.assertGreater(metrics["baseline"], metrics["treatment"])
 
     def test_adaptive_policies_are_applied_by_real_execution(self):
         for kind in ("convergence", "no_improvement"):

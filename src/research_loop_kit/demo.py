@@ -145,8 +145,13 @@ def respond(job, state):
         }
     if kind == "implement":
         index = int(payload["experiment"]["id"][1:])
+        code = CODE.replace("RATE", str(0.05 * index))
+        if not payload["experiment"].get("stop_policy"):
+            code = code.replace("from rlk_stop import StopController\n", "").replace(
+                ", stop=StopController.from_environment()", ""
+            )
         return {
-            "files": {"experiment.py": CODE.replace("RATE", str(0.05 * index))},
+            "files": {"experiment.py": code},
             "shared_files": {} if _has_shared_code(payload) else {"research/quadratic.py": SHARED_CODE},
             "notes": "標準ライブラリだけで計算する動作実証実装",
         }
