@@ -308,6 +308,9 @@ def run_case(hub, name, *, csv_case=False):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
