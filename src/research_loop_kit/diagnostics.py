@@ -1,5 +1,6 @@
 """状態の説明と復旧案内。判定は実際のジョブ取得条件を共有する。"""
 
+from .confirmation import registered
 from .store import digest
 
 
@@ -85,7 +86,19 @@ def diagnose(state, blocker, exhausted):
                     and r.get("manifest", {}).get("stage", "exploration") == "exploration"
                     and digest(r) in origins
                 ):
-                    candidates.append({"cycle": h["cycle"], "experiment": r["id"], "hash": digest(r)})
+                    registration = registered(state, digest(r))
+                    if registration and any(
+                        j["payload"].get("confirmation_of", {}).get("result_hash") == digest(r) for j in jobs
+                    ):
+                        continue
+                    candidate = {"cycle": h["cycle"], "experiment": r["id"], "hash": digest(r)}
+                    if registration:
+                        candidate.update(
+                            protocol_hash=registration["hash"], seed_count=registration["protocol"]["seed_count"]
+                        )
+                        if remaining["runs"] < candidate["seed_count"]:
+                            continue
+                    candidates.append(candidate)
     if candidates:
         actions.append({"command": "confirm", "reason": "未使用seedを選び、固定条件の探索結果を確認できます"})
     if not actions:

@@ -20,10 +20,19 @@ Path(a.output).write_text(json.dumps({"seed": a.seed, "baseline": baseline,
 SHARED_CODE = """import random
 
 
-def compare(seed, *, rate, steps, stop=None):
+def compare(seed, *, rate, steps, stop=None, comparison=None):
     rng = random.Random(seed)
     x = rng.uniform(-5, 5)
     baseline = x * x
+    if comparison is not None:
+        with comparison.condition("baseline") as condition:
+            condition.step(baseline)
+        with comparison.condition("treatment") as condition:
+            for _ in range(steps):
+                x -= rate * 2 * x
+                if condition.step(x * x):
+                    break
+        return baseline, x * x
     for _ in range(steps):
         x -= rate * 2 * x
         if stop is not None and stop.step(x * x):
@@ -137,6 +146,21 @@ def respond(job, state):
                     "success_rule": "数値丸めより十分大きい差を確認する動作実証の閾値",
                     "stop_rule": "8更新で終了",
                     "stop_policy": {"kind": "fixed_iterations", "max_iterations": 8},
+                    "comparison_policy": {
+                        "basis": "independent",
+                        "unit": "loss_evaluations",
+                        "rationale": "対照は更新前の固定点、介入は最大8更新。反復予算が等しい比較ではない。",
+                        "baseline": {
+                            "stop_policy": {"kind": "fixed_iterations", "max_iterations": 1},
+                            "max_evaluations": 1,
+                            "max_wall_seconds": 60,
+                        },
+                        "treatment": {
+                            "stop_policy": {"kind": "fixed_iterations", "max_iterations": 8},
+                            "max_evaluations": 8,
+                            "max_wall_seconds": 60,
+                        },
+                    },
                     "limitations": "解析解が既知の例",
                 }
                 for i, c in enumerate(payload["candidates"][: state["config"]["experiments_per_cycle"]])
@@ -146,7 +170,11 @@ def respond(job, state):
     if kind == "implement":
         index = int(payload["experiment"]["id"][1:])
         code = CODE.replace("RATE", str(0.05 * index))
-        if not payload["experiment"].get("stop_policy"):
+        if payload["experiment"].get("comparison_policy"):
+            code = code.replace(
+                "from rlk_stop import StopController", "from rlk_stop import ComparisonRecorder"
+            ).replace("stop=StopController.from_environment()", "comparison=ComparisonRecorder.from_environment()")
+        elif not payload["experiment"].get("stop_policy"):
             code = code.replace("from rlk_stop import StopController\n", "").replace(
                 ", stop=StopController.from_environment()", ""
             )

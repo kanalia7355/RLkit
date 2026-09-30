@@ -4,7 +4,7 @@ import ast
 from importlib import metadata
 from importlib.resources import files
 import os
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import sys
@@ -161,10 +161,17 @@ def test_implementation(root, job, result, directory, timeout):
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "RLK_STOP_POLICY": dump(policy),
                 "RLK_STOP_RECORD": str(check / "termination.json"),
+                "RLK_COMPARISON_POLICY": dump(job["payload"]["experiment"].get("comparison_policy")),
+                "RLK_COMPARISON_RECORD": str(check / "comparison.json"),
             },
         )
         record = verify_stop(check / "termination.json", policy)
         stop_check = {"seed": seed, "record": record}
+        comparison = job["payload"]["experiment"].get("comparison_policy")
+        if comparison:
+            stop_check["comparison"] = verify_comparison(
+                check / "comparison.json", comparison, read_json(check / "metrics.json")
+            )
     observed = read_code(work)
     expected = dict(sources, **{"tests/" + p: text for p, text in result["tests"].items()})
     if (
@@ -208,6 +215,14 @@ def verify_validation(root, validation, sources, experiment):
             or verify_stop(directory / "stop-check/termination.json", experiment["stop_policy"]) != check["record"]
         ):
             raise LoopError("停止条件の実行前検証記録が一致しません")
+    if experiment.get("comparison_policy"):
+        observed = verify_comparison(
+            directory / "stop-check/comparison.json",
+            experiment["comparison_policy"],
+            read_json(directory / "stop-check/metrics.json"),
+        )
+        if observed != validation.get("stop_check", {}).get("comparison"):
+            raise LoopError("比較予算の実行前検証が一致しません")
     for name in ("stdout.log", "stderr.log"):
         if not (directory / name).is_file():
             raise LoopError("実行前検証ログがありません")
@@ -232,3 +247,16 @@ def verify_stop(path, policy):
         return verify_record(read_json(path), policy)
     except (OSError, ValueError, LoopError) as exc:
         raise LoopError(f"停止条件の検証に失敗しました: {exc}") from exc
+
+
+def verify_comparison(path, policy, metrics=None):
+    from .stopping import verify_comparison as verify
+
+    try:
+        record = verify(read_json(path), policy, metrics)
+        termination = verify_stop(Path(path).parent / "termination.json", policy["treatment"]["stop_policy"])
+        if record["conditions"]["treatment"]["stop"] != termination:
+            raise LoopError("介入の比較記録とtermination.jsonが一致しません")
+        return record
+    except (LoopError, ValueError, OSError) as exc:
+        raise LoopError(f"比較予算の検証に失敗しました: {exc}") from exc

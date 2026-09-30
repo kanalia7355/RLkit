@@ -19,41 +19,57 @@ from research_loop_kit.store import digest
 
 COMPUTE = """import math
 import random
+from contextlib import nullcontext
 
 
-def compare(seed, steps, stop=None):
+def compare(seed, steps, comparison=None):
     alpha = random.Random(seed).uniform(0.5, 1.5)
     truth = math.expm1(alpha) / alpha
-    baseline = treatment = 0.0
-    for i in range(steps):
-        left, right = math.exp(alpha * i / steps), math.exp(alpha * (i + 1) / steps)
-        baseline += left / steps
-        treatment += (left + right) / (2 * steps)
-        if stop is not None and stop.step(abs(treatment - truth)):
-            break
-    return abs(baseline - truth), abs(treatment - truth)
+    values = []
+    for name in ("baseline", "treatment"):
+        context = comparison.condition(name) if comparison else nullcontext()
+        with context as condition:
+            total = 0.0
+            for i in range(steps):
+                left = math.exp(alpha * i / steps)
+                if name == "baseline":
+                    total += left / steps
+                else:
+                    right = math.exp(alpha * (i + 1) / steps)
+                    total += (left + right) / (2 * steps)
+                error = abs(total - truth)
+                if condition and condition.step(error, evaluations=1 if name == "baseline" else 2):
+                    break
+            values.append(error)
+    return tuple(values)
 """
 
 CSV_CODE = """import random
+from contextlib import nullcontext
 
 
-def compare(rows, seed, stop=None):
+def compare(rows, seed, comparison=None):
+    # 共通のシャッフル・分割は計測外。各条件の訓練統計と評価走査は計測内。
     order = list(rows)
     random.Random(seed).shuffle(order)
     train, test = order[:30], order[30:]
-    mx = sum(x for x,y in train) / len(train)
-    my = sum(y for x,y in train) / len(train)
-    slope = sum((x-mx)*(y-my) for x,y in train) / sum((x-mx)**2 for x,y in train)
-    intercept = my - slope * mx
-    baseline = treatment = 0.0
-    n = 0
-    for x,y in test:
-        baseline += (my-y)**2
-        treatment += (intercept+slope*x-y)**2
-        n += 1
-        if stop is not None and stop.step(treatment/n):
-            break
-    return baseline/n, treatment/n
+    values = []
+    for name in ("baseline", "treatment"):
+        context = comparison.condition(name) if comparison else nullcontext()
+        with context as condition:
+            my = sum(y for x,y in train) / len(train)
+            if name == "treatment":
+                mx = sum(x for x,y in train) / len(train)
+                slope = sum((x-mx)*(y-my) for x,y in train) / sum((x-mx)**2 for x,y in train)
+                intercept = my - slope * mx
+            total = 0.0
+            for n,(x,y) in enumerate(test,1):
+                prediction = my if name == "baseline" else intercept+slope*x
+                total += (prediction-y)**2
+                if condition and condition.step(total/n):
+                    break
+            values.append(total/n)
+    return tuple(values)
 """
 
 COMPUTE_TEST = """import math
@@ -101,7 +117,7 @@ class Tests(unittest.TestCase):
 ENTRY = """import argparse
 import json
 from pathlib import Path
-from rlk_stop import StopController
+from rlk_stop import ComparisonRecorder
 from research.methods import compare
 {imports}
 p = argparse.ArgumentParser()
@@ -203,6 +219,21 @@ def run_case(hub, name, *, csv_case=False):
                 "success_rule": "既知の合成例で丸め誤差より大きい改善を記述的に確認",
                 "stop_rule": "評価10行を走査" if csv_case else "32区間を走査",
                 "stop_policy": {"kind": "fixed_iterations", "max_iterations": 10 if csv_case else 32},
+                "comparison_policy": {
+                    "basis": "iterations",
+                    "unit": "予測評価" if csv_case else "関数評価",
+                    "rationale": "同一走査数。台形則の関数評価は倍、分割は共通・計測外、回帰の訓練は条件内。",
+                    "baseline": {
+                        "stop_policy": {"kind": "fixed_iterations", "max_iterations": 10 if csv_case else 32},
+                        "max_evaluations": 10 if csv_case else 32,
+                        "max_wall_seconds": 60,
+                    },
+                    "treatment": {
+                        "stop_policy": {"kind": "fixed_iterations", "max_iterations": 10 if csv_case else 32},
+                        "max_evaluations": 10 if csv_case else 64,
+                        "max_wall_seconds": 60,
+                    },
+                },
                 "limitations": "未知のデータや関数へ一般化しない",
                 "reference_ids": ["r1"],
             }
@@ -227,9 +258,9 @@ def run_case(hub, name, *, csv_case=False):
         data='with (Path(os.environ["RLK_INPUT_DIR"])/"data/observations.csv").open(encoding="utf-8",newline="") as f:\n    rows = [(float(r["x"]),float(r["y"])) for r in csv.DictReader(f)]'
         if csv_case
         else "",
-        call="compare(rows,a.seed,StopController.from_environment())"
+        call="compare(rows,a.seed,ComparisonRecorder.from_environment())"
         if csv_case
-        else "compare(a.seed,32,StopController.from_environment())",
+        else "compare(a.seed,32,ComparisonRecorder.from_environment())",
     )
     submit(
         {
@@ -264,7 +295,7 @@ def run_case(hub, name, *, csv_case=False):
                     {
                         "id": r["id"],
                         "assessment": "supported" if r["threshold_met"] else "inconclusive",
-                        "interpretation": "提供された実測に限定した記述的改善。統計検定未実施。",
+                        "interpretation": "実測と事前登録された解析がある場合だけ確認。一般化は未検証。",
                         "limitations": "合成条件のみ。同じAgentによる実装・レビュー。",
                     }
                     for r in results
@@ -277,7 +308,18 @@ def run_case(hub, name, *, csv_case=False):
 
     review()
     source = engine.status()["history"][0]["results"][0]
-    engine.confirm(1, "e1", digest(source), [101, 102, 103])
+    protocol = {
+        "family_id": "acceptance",
+        "members": [{"cycle": 1, "experiment": "e1", "result_hash": digest(source)}],
+        "seed_count": 8,
+        "method": "paired_exceedance_test",
+        "alpha": 0.05,
+        "multiplicity": "bonferroni",
+        "missing_policy": "inconclusive",
+        "rationale": "独立な生成seedの限定的合成確認。実データ一般化を主張しない",
+    }
+    protocol_hash = engine.plan_confirmation(protocol)
+    engine.confirm(1, "e1", digest(source), list(range(101, 109)), protocol_hash)
     engine.run(experiments_only=True)
     review()
     engine.export()

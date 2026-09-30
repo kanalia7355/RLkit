@@ -192,7 +192,7 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(confirmation["manifest"]["code_hash"], source["manifest"]["code_hash"])
         self.assertEqual(confirmation["manifest"]["experiment"], source["manifest"]["experiment"])
         self.assertEqual(confirmation["manifest"]["seeds"], [101, 102])
-        self.assertEqual(entry["claim_status"]["e1"], "confirmed")
+        self.assertEqual(entry["claim_status"]["e1"], "threshold_replicated")
         verify_evidence(self.root, entry)
         self.assertIn("確認実験", (self.root / "reports/MEETING_REPORT-002.md").read_text(encoding="utf-8"))
         self.assertIn("探索段階", (self.root / "reports/KNOWLEDGE.md").read_text(encoding="utf-8"))

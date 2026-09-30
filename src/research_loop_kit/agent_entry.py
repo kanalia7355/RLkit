@@ -122,6 +122,8 @@ def main(root, argv=None):
                 "export",
                 "doctor",
                 "confirm",
+                "confirmation-plan",
+                "reference-register",
                 "skill-assess",
                 "skill-evaluation-plan",
                 "skill-next",

@@ -65,7 +65,9 @@ def verify(archive_path, wheel_path):
             check=True,
         )
         cases = json.loads(acceptance.stdout)
-        if len(cases) != 2 or any(c["runs"] != 6 or c["results"][-1]["claim"] != "confirmed" for c in cases):
+        if len(cases) != 2 or any(
+            c["runs"] != 11 or c["results"][-1]["claim"] != "registered_statistical_support" for c in cases
+        ):
             raise ValueError("Active方式の受け入れ検証が完了していません")
         site = root / "installed"
         subprocess.run(
@@ -146,7 +148,7 @@ def verify(archive_path, wheel_path):
                     "meeting_report": "PASS",
                     "approved_skill_evolution": "PASS",
                     "shared_source_reuse": "PASS",
-                    "active_acceptance": "PASS (2 cases, 12 seed runs; fixed responses)",
+                    "active_acceptance": "PASS (2 cases, 22 seed runs; fixed responses)",
                 },
                 ensure_ascii=False,
             )

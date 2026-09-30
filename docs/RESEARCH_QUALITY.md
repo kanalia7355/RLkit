@@ -61,9 +61,10 @@ rlk confirm PROJECT --cycle 1 --experiment e1 --hash RESULT_HASH --seeds 101 102
 時間・作業回数・実験回数の予算をリセットしません。予算不足や条件変更は分岐して扱います。
 
 全seedが完了し、閾値に到達し、レビューもsupportedである場合に、その確認サイクルを
-`confirmed`と記録します。それ以外は`confirmation_inconclusive`です。
+`threshold_replicated`と記録します。それ以外は`confirmation_inconclusive`です。
 元の探索結果を確認済みへ上書きしません。新しいseedでの確認は独立したデータセットでの
-外的妥当性検証の代わりではなく、統計的有意差の自動判定もしません。
+外的妥当性検証の代わりではありません。事前登録した検定を追加する場合は
+[確認実験の証跡](EVIDENCE.md#確認実験の事前登録)を参照してください。旧方式は記述的再確認です。
 
 ## 4. 途中結果を報告する
 

@@ -101,3 +101,21 @@ skill-assessで証跡を提出し、utility_supported / regression / inconclusiv
 完了済み研究には再開メニューのconfirmを提示し、diagnosticsの候補と残り予算を確認する。
 分岐では登録data_filesもコピーされる。停止条件はstop_policyで固定し、実装はrlk_stop.StopControllerを実際の更新へ接続する。
 出典はplan.referencesと各実験のreference_idsへ記録する。readは読んだ箇所・内容を残す申告であり、外部検証済みとは書かない。
+
+## 比較・確認・本文固定
+
+新しいplanにはcomparison_policyを必ず含める。比較軸basis・単位unit・根拠rationale、
+両条件のstop_policy/max_evaluations/max_wall_secondsを固定する。
+実装はrlk_stop.ComparisonRecorder.from_environment()で別々のconditionブロック内の
+実際の処理を計測し、stepの最終観測を出力主指標に一致させる。計測範囲と共通処理を明記する。
+
+確認前にconfirmation-planでfamilyの探索結果ハッシュ・seed_count・method・alpha・
+bonferroni・missing_policy=inconclusiveを固定し、confirmへprotocol_hashを渡す。
+方法はdescriptive_meanまたはpaired_exceedance_test。後者はmin_effectを厳密に超えるseedの
+確率の片側二項検定であり、平均差の検定ではない。独立標本の仮定と補正範囲を説明する。
+閾値再現と事前登録検定の基準達成を区別し、追加seedによる再判定をしない。
+
+資料本文はdata/やimports/のUTF-8テキストをreference-registerで固定する。
+content_checkedは登録snapshot_hash・本文に実在するquote・assessment・conditionsを残す。
+引用一致とAgentの意味解釈を区別し、取得元の真正性を自動認証したと称しない。
+詳細は配布元のdocs/EVIDENCE.md。利用者にJSON作成やコマンド入力を求めずAgentが内部で扱う。

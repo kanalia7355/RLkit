@@ -29,7 +29,7 @@ def meeting_report(state, entry):
         "",
         entry["direction"],
         "",
-        f"{len(entry['results'])}件の実験を報告する。数値の差は記述統計であり、統計的有意差の検定は未実施。",
+        f"{len(entry['results'])}件の実験を報告する。平均差・bootstrap区間は記述統計。事前登録した検定がある場合は下記に別記する。",
         "探索の閾値到達は確認済みの知見ではない。確認実験も指定条件での再確認であり、一般化を保証しない。",
         "",
         *[f"- {r['id']}: {r['assessment']} — {r['interpretation']}" for r in reviews],
@@ -73,6 +73,7 @@ def meeting_report(state, entry):
             lines += [f"- {label}: {spec.get(key, '未記録')}"]
         lines += [
             f"- 構造化停止方針: {spec.get('stop_policy', '未登録（終了条件の自動検証なし）')}",
+            f"- 比較予算（割当）: {spec.get('comparison_policy', '未登録')}",
             f"- 対応する資料ID: {spec.get('reference_ids', [])}",
         ]
         lines += [f"- 実行seed: {r.get('manifest', {}).get('seeds', '未実行')}", ""]
@@ -92,6 +93,24 @@ def meeting_report(state, entry):
             f" | {r.get('effect_mean', '—')} | {ci_text} | {r.get('n', 0)} | {r['threshold_met']} |"
         ]
     for r in entry["results"]:
+        if r.get("confirmation_analysis"):
+            a = r["confirmation_analysis"]
+            lines += [
+                "",
+                f"確認事前登録: `{a['protocol_hash']}` / {a['status']}",
+                f"方法={a['method']} / n={a['n']}/{a['planned_n']} / family={a['family_size']} / alpha={a['alpha_per_comparison']} / p={a['p_value']}",
+                f"閾値の再現={a['threshold_replicated']} / 検定基準={a['statistical_criterion_met']}",
+                a["hypothesis"],
+                a["limits"],
+                "",
+            ]
+        manifest = r.get("manifest", {})
+        if manifest.get("experiment", {}).get("comparison_policy") and r.get("evidence"):
+            lines += [
+                "",
+                f"両条件の実測コスト・停止記録: [seed別証跡](../{r['evidence']})内のcomparison.json。計測範囲は実装レビューの対象。",
+                "",
+            ]
         if r.get("error") or r.get("stop_reason"):
             lines += ["", f"停止・失敗記録 {r['id']}: {r.get('stop_reason') or r.get('error')}", ""]
     lines += ["", "## 考察・限界", ""]
