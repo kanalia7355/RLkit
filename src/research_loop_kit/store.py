@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import sqlite3
+import sys
 import time
 
 from .config import LoopError, dump, upgrade
@@ -25,7 +26,7 @@ class Store:
         self._migrated = False
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, rollback=None):
         if not self.path.exists():
             raise LoopError("未初期化です。rlk init を実行してください")
         db = sqlite3.connect(self.path, timeout=30)
@@ -39,7 +40,13 @@ class Store:
             db.commit()
             self._migrated = True
         except BaseException:
-            db.rollback()
+            try:
+                # ファイルを戻すまでDBの書き込みロックを保持する。
+                # 同時submitに、巻き戻す途中のsrcを参照させない。
+                if rollback is not None:
+                    rollback.__exit__(*sys.exc_info())
+            finally:
+                db.rollback()
             raise
         finally:
             db.close()

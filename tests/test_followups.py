@@ -1,5 +1,6 @@
 """レビュー指摘への対応（予算切れ時のレビュー、状態の分離、旧DB移行、書き込み順序など）の検証。"""
 
+import copy
 import json
 from pathlib import Path
 import sqlite3
@@ -12,6 +13,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from research_loop_kit import sessions as sessions_module
+from research_loop_kit import shared_source
+from research_loop_kit import store as store_module
 from research_loop_kit.config import LoopError
 from research_loop_kit.demo import ANSWERS, respond
 from research_loop_kit.engine import Engine
@@ -166,6 +169,103 @@ class FollowupTests(unittest.TestCase):
         self.assertFalse(target.exists())
         engine.submit(job["id"], job["token"], response)
         self.assertTrue(target.exists())
+
+    def test_partial_source_write_is_rolled_back_and_corrected_response_can_submit(self):
+        engine = self.accepted()
+        job = engine.claim({"implement"})
+        response = respond(job, engine.status())
+        response["shared_files"]["research/extra.py"] = "x = 1\n"
+        original = shared_source.write_atomic
+
+        def fail_second(path, text):
+            if path.name == "extra.py":
+                raise OSError("保存失敗")
+            original(path, text)
+
+        with patch.object(shared_source, "write_atomic", side_effect=fail_second):
+            with self.assertRaisesRegex(OSError, "保存失敗"):
+                engine.submit(job["id"], job["token"], copy.deepcopy(response))
+        self.assertFalse((self.root / "src/research/quadratic.py").exists())
+        self.assertFalse((self.root / "src/research/extra.py").exists())
+        self.assertEqual(next(j for j in engine.status()["jobs"] if j["id"] == job["id"])["status"], "running")
+        self.assertFalse([j for j in engine.status()["jobs"] if j["kind"] == "execute"])
+        response["shared_files"]["research/quadratic.py"] += "\n# corrected response\n"
+        engine.submit(job["id"], job["token"], response)
+        self.assertIn("corrected response", (self.root / "src/research/quadratic.py").read_text(encoding="utf-8"))
+
+    def test_partial_experiment_write_is_removed_before_corrected_resubmit(self):
+        engine = self.accepted()
+        job = engine.claim({"implement"})
+        response = respond(job, engine.status())
+        response["files"]["helper.py"] = "x = 1\n"
+        original = shared_source.save_same
+
+        def fail_second(path, text, base):
+            if path.name == "helper.py":
+                raise OSError("実験保存失敗")
+            original(path, text, base)
+
+        with patch.object(shared_source, "save_same", side_effect=fail_second):
+            with self.assertRaisesRegex(OSError, "実験保存失敗"):
+                engine.submit(job["id"], job["token"], copy.deepcopy(response))
+        self.assertFalse((self.root / shared_source.experiment_folder(job)).exists())
+        self.assertFalse((self.root / "src/research/quadratic.py").exists())
+        response["files"]["experiment.py"] += "\n# corrected response\n"
+        engine.submit(job["id"], job["token"], response)
+
+    def test_commit_failure_restores_existing_source_bytes(self):
+        engine = self.accepted(autonomy="review_each_cycle")
+        self.until_review(engine)
+        self.finish_review(engine)
+        engine.run()
+        engine.accept(engine.status()["proposal_hash"])
+        job = engine.claim({"implement"})
+        response = respond(job, engine.status())
+        target = self.root / "src/research/quadratic.py"
+        before = target.read_bytes()
+        response["shared_files"] = {"research/quadratic.py": before.decode() + "\n# update\n"}
+        connect = store_module.sqlite3.connect
+
+        class CommitFailure(sqlite3.Connection):
+            def commit(self):
+                raise sqlite3.OperationalError("commit失敗")
+
+        def fail_commit(*args, **kwargs):
+            return connect(*args, **kwargs, factory=CommitFailure)
+
+        with patch.object(store_module.sqlite3, "connect", side_effect=fail_commit):
+            with self.assertRaisesRegex(sqlite3.OperationalError, "commit失敗"):
+                engine.submit(job["id"], job["token"], copy.deepcopy(response))
+        self.assertEqual(target.read_bytes(), before)
+        self.assertFalse((self.root / shared_source.experiment_folder(job)).exists())
+        response["shared_files"]["research/quadratic.py"] += "# corrected\n"
+        engine.submit(job["id"], job["token"], response)
+        self.assertIn("corrected", target.read_text(encoding="utf-8"))
+
+    def test_run_drains_experiment_before_reporting_blocked_implementation(self):
+        engine = self.accepted()
+        edit_state(self.root, lambda s: s["config"].update(max_agent_calls=s["agent_calls"] + 1))
+        with self.assertRaisesRegex(LoopError, "回数の上限"):
+            engine.run()
+        state = engine.status()
+        executions = [j for j in state["jobs"] if j["kind"] == "execute"]
+        self.assertEqual(len(executions), 1)
+        self.assertEqual(executions[0]["status"], "done")
+        self.assertEqual(state["runs"], 3)
+        self.assertEqual(len([j for j in state["jobs"] if j["kind"] == "implement" and j["status"] == "pending"]), 1)
+        exported = json.loads((self.root / "reports/status.json").read_text(encoding="utf-8"))
+        self.assertEqual(exported["runs"], 3)
+
+    def test_run_finishes_review_after_last_implementation_consumes_agent_budget(self):
+        engine = self.accepted()
+        edit_state(self.root, lambda s: s["config"].update(max_agent_calls=s["agent_calls"] + 2))
+        engine.run()
+        state = engine.status()
+        self.assertEqual(state["phase"], "complete")
+        self.assertEqual(state["runs"], 6)
+        self.assertEqual(len(state["history"]), 1)
+        self.assertTrue((self.root / "reports/MEETING_REPORT-001.md").is_file())
+        self.assertIn("回数", state["stop_reason"])
 
     # 低: 統計・スキル上限・セッション整理
     def test_bootstrap_interval_is_recorded_and_verified(self):
