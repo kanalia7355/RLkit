@@ -2,6 +2,7 @@
 
 import ast
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import hashlib
 import json
 import platform
@@ -453,7 +454,7 @@ class Engine:
         strings(result.get("reusable_lessons"), "reusable_lessons")
 
     def submit(self, job_id, token, result):
-        with self.store.transaction() as db:
+        with ExitStack() as rollback, self.store.transaction(rollback=rollback) as db:
             state = self.store.state(db)
             job = next((j for j in self.store.jobs(db) if j["id"] == job_id), None)
             if not job or job["status"] != "running" or job["token"] != token:
@@ -463,7 +464,7 @@ class Engine:
                 self._finish(db, state, job, result)
                 # ファイル反映はDB更新がすべて成功した後、commitの直前に行う。
                 if job["kind"] == "implement":
-                    shared_source.publish(self.root, job, result)
+                    shared_source.publish(self.root, job, result, rollback)
                 self._flush_pending_documents()
                 return
         # 承認済みスキルのテストはDBロックの外で実行する。
@@ -775,18 +776,29 @@ class Engine:
             allowed.update(kind for kind in kinds if dict(cfg, **cfg["roles"].get(kind, {}))["backend"] != "active")
         if not allowed:
             return []
-        with ThreadPoolExecutor(max_workers=cfg["max_parallel_agents"] + cfg["max_parallel_experiments"]) as pool:
-            while True:
-                batch = []
+        try:
+            with ThreadPoolExecutor(max_workers=cfg["max_parallel_agents"] + cfg["max_parallel_experiments"]) as pool:
                 while True:
-                    job = self.claim(allowed)
-                    if not job:
+                    batch = []
+                    blocked = None
+                    while True:
+                        try:
+                            job = self.claim(allowed)
+                        except LoopError as exc:
+                            blocked = exc
+                            break
+                        if not job:
+                            break
+                        batch.append(pool.submit(self.work, job))
+                    if not batch:
+                        if blocked:
+                            raise blocked
                         break
-                    batch.append(pool.submit(self.work, job))
-                if not batch:
-                    break
-                completed += [f.result() for f in batch]
-        self.export()
+                    # 取得中に予算へ到達しても、実行中の仕事を待ってから再度取得する。
+                    # implementが完了すれば、AI予算を消費しないexecuteを取得できる。
+                    completed += [f.result() for f in batch]
+        finally:
+            self.export()
         return completed
 
     def export(self):

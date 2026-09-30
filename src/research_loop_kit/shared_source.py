@@ -9,7 +9,7 @@ import hashlib
 import re
 
 from .config import LoopError, dump
-from .fsutil import no_links, write_atomic, write_new
+from .fsutil import no_links, rollback_files, write_atomic, write_new
 from .store import digest
 
 VERSIONS = ".rlk/source-versions"
@@ -119,13 +119,19 @@ def prepare(root, job, result):
     return snapshot
 
 
-def publish(root, job, result):
+def publish(root, job, result, rollback):
     """実装受理トランザクションの最後（DB更新の後、commitの前）に呼ぶ。
 
-    版フォルダと実験フォルダは内容アドレス・追記のみで、巻き戻っても無害。
-    作業用のroot/srcだけは上書きなので、一時ファイルからの置換で途中状態を残さない。
+    内容アドレスの版フォルダは追記のみ。作業用srcと実験ファイルは、
+    DBのcommitまで元の内容を保持し、保存・commit失敗時に戻す。
     """
     snapshot = prepare(root, job, result)
+    folder = root / result["experiment_path"]
+    paths = [root / "src" / name for name in result.get("shared_files", {})]
+    paths += [folder / name for name in result["files"]]
+    paths.append(folder / "experiment.json")
+    # 呼出元のExitStackはDBトランザクションより外側で閉じ、commit失敗も復旧する。
+    rollback.enter_context(rollback_files(paths, root))
     version = store_version(root, snapshot)
     for name, code in result.get("shared_files", {}).items():
         path = root / "src" / name
@@ -134,7 +140,6 @@ def publish(root, job, result):
         if path.exists():
             no_links(path, root)
         write_atomic(path, code)
-    folder = root / result["experiment_path"]
     for name, code in result["files"].items():
         save_same(folder / name, code, root)
     record = {

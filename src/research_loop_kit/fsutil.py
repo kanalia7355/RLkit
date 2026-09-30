@@ -1,7 +1,9 @@
 """ファイル操作の共通処理: リンク検査・新規作成・原子的な置換。"""
 
+from contextlib import contextmanager
 import os
 from pathlib import Path
+import shutil
 import stat
 import tempfile
 
@@ -54,3 +56,40 @@ def write_atomic(path, text):
     except BaseException:
         Path(temp).unlink(missing_ok=True)
         raise
+
+
+@contextmanager
+def rollback_files(paths, base):
+    """DBのcommitまで元ファイルを保持し、例外時に複数ファイルの更新を戻す。
+
+    単一ファイルの置換は原子的だが、DBと複数ファイルをまたぐ原子性はない。
+    この復旧は捕捉できる例外用で、プロセスの強制終了・電源断は対象外。
+    """
+    originals = {}
+    directories = set()
+    with tempfile.TemporaryDirectory(prefix="publish-", dir=base / ".rlk") as temporary:
+        for index, path in enumerate(paths):
+            parent = path.parent
+            while not parent.exists():
+                directories.add(parent)
+                parent = parent.parent
+            no_links(parent, base)
+            if path.exists() or path.is_symlink():
+                no_links(path, base)
+                backup = Path(temporary) / str(index)
+                shutil.copy2(path, backup)
+                originals[path] = backup
+            else:
+                originals[path] = None
+        try:
+            yield
+        except BaseException:
+            for path, backup in reversed(list(originals.items())):
+                if backup is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    os.replace(backup, path)
+            for directory in sorted(directories, key=lambda p: len(p.parts), reverse=True):
+                if directory.exists() and not any(directory.iterdir()):
+                    directory.rmdir()
+            raise
