@@ -109,7 +109,9 @@ def prepare(root, job, result):
     validate_sources(dict(current, **changes))
     for name, code in changes.items():
         if current.get(name) not in (base.get(name), code):
-            raise LoopError(f"共通ソースの並列変更が競合しました: {name}。最新srcを確認して別モジュール名に分けてください")
+            raise LoopError(
+                f"共通ソースの並列変更が競合しました: {name}。最新srcを確認して別モジュール名に分けてください"
+            )
     result.pop("shared_snapshot", None)
     result["shared_source_hash"] = digest(snapshot)
     result["shared_source_files"] = file_hashes(snapshot)
@@ -135,8 +137,12 @@ def publish(root, job, result):
     folder = root / result["experiment_path"]
     for name, code in result["files"].items():
         save_same(folder / name, code, root)
-    record = {"experiment": job["payload"]["experiment"], "proposal_hash": job["payload"]["proposal_hash"],
-              "shared_source_hash": version, "source_version": f"{VERSIONS}/{version}"}
+    record = {
+        "experiment": job["payload"]["experiment"],
+        "proposal_hash": job["payload"]["proposal_hash"],
+        "shared_source_hash": version,
+        "source_version": f"{VERSIONS}/{version}",
+    }
     save_same(folder / "experiment.json", dump(record) + "\n", root)
 
 

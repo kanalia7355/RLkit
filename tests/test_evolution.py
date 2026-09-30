@@ -73,8 +73,10 @@ class EvolutionTests(unittest.TestCase):
         prompt = render(job, state, self.root / "response.json", self.root)
         self.assertIn("承認・検証済み研究スキル: demo-evidence-check", prompt)
         self.engine.disable_skill(active["name"])
-        self.assertNotIn("承認・検証済み研究スキル: demo-evidence-check",
-                         render(job, self.engine.status(), self.root / "response.json", self.root))
+        self.assertNotIn(
+            "承認・検証済み研究スキル: demo-evidence-check",
+            render(job, self.engine.status(), self.root / "response.json", self.root),
+        )
         self.assertTrue((self.root / active["path"] / "test.stderr.log").is_file())
 
     def test_failed_behavior_test_never_activates(self):
@@ -105,7 +107,9 @@ class EvolutionTests(unittest.TestCase):
         with self.assertRaises(LoopError):
             validate_build(response, candidate["design"])
         del response["files"]["../outside.py"]
-        response["files"]["SKILL.md"] = response["files"]["SKILL.md"].replace("(references/evidence.md)", "(missing.md)")
+        response["files"]["SKILL.md"] = response["files"]["SKILL.md"].replace(
+            "(references/evidence.md)", "(missing.md)"
+        )
         with self.assertRaises(LoopError):
             validate_build(response, candidate["design"])
 
@@ -152,7 +156,12 @@ class EvolutionTests(unittest.TestCase):
         active = next(iter(state["active_skills"].values()))
         (self.root / active["path"] / "references/evidence.md").write_text("変更", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "変更"):
-            render({"kind": "review", "id": 900, "token": "test", "payload": {}}, state, self.root / "response.json", self.root)
+            render(
+                {"kind": "review", "id": 900, "token": "test", "payload": {}},
+                state,
+                self.root / "response.json",
+                self.root,
+            )
 
     def test_resume_skills_preserves_research_pause(self):
         candidate = self.design_ready()

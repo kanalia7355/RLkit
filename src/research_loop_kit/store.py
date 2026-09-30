@@ -11,8 +11,7 @@ from .config import LoopError, dump, upgrade
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
-                                     allow_nan=False).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
 # DBに別行で持ち、stateの本文へは保存しない派生項目。
@@ -104,8 +103,7 @@ class Store:
 
     @staticmethod
     def job(db, cycle, kind, payload):
-        return db.execute("INSERT INTO jobs(cycle,kind,payload) VALUES (?,?,?)",
-                          (cycle, kind, dump(payload))).lastrowid
+        return db.execute("INSERT INTO jobs(cycle,kind,payload) VALUES (?,?,?)", (cycle, kind, dump(payload))).lastrowid
 
     @staticmethod
     def jobs(db, cycle=None, statuses=None):
@@ -120,8 +118,10 @@ class Store:
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         rows = db.execute(query + " ORDER BY id", args)
-        return [dict(row, payload=json.loads(row["payload"]),
-                     result=json.loads(row["result"]) if row["result"] else None) for row in rows]
+        return [
+            dict(row, payload=json.loads(row["payload"]), result=json.loads(row["result"]) if row["result"] else None)
+            for row in rows
+        ]
 
 
 def strip_derived(state):

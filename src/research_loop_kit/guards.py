@@ -36,8 +36,11 @@ def inspect_code(sources):
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name not in loaded:
                 findings.append(f"{filename}:{node.lineno}: {node.name} の同一ファイル内参照なし（外部利用を確認）")
-    return {"status": "warning" if findings else "no_static_findings", "findings": findings,
-            "limits": "ASTの注意喚起のみ。動的配線・パラメータ効果・ハードコード不存在は未検証"}
+    return {
+        "status": "warning" if findings else "no_static_findings",
+        "findings": findings,
+        "limits": "ASTの注意喚起のみ。動的配線・パラメータ効果・ハードコード不存在は未検証",
+    }
 
 
 BOOTSTRAP_RESAMPLES = 2000
@@ -61,12 +64,14 @@ def summarize_effects(values, experiment):
     """seed別の実測値から記述統計を作る。実行時と完了前の再計算で同じ関数を使う。"""
     sign = 1 if experiment["direction"] == "maximize" else -1
     effects = [sign * (v["treatment"] - v["baseline"]) for v in values]
-    return {"baseline_mean": statistics.mean(v["baseline"] for v in values),
-            "treatment_mean": statistics.mean(v["treatment"] for v in values),
-            "effect_mean": statistics.mean(effects),
-            "effect_std": statistics.stdev(effects) if len(effects) > 1 else None,
-            "effect_ci95": paired_bootstrap_ci(effects),
-            "threshold_met": statistics.mean(effects) >= experiment["min_effect"]}
+    return {
+        "baseline_mean": statistics.mean(v["baseline"] for v in values),
+        "treatment_mean": statistics.mean(v["treatment"] for v in values),
+        "effect_mean": statistics.mean(effects),
+        "effect_std": statistics.stdev(effects) if len(effects) > 1 else None,
+        "effect_ci95": paired_bootstrap_ci(effects),
+        "threshold_met": statistics.mean(effects) >= experiment["min_effect"],
+    }
 
 
 def verify_evidence(root, entry):

@@ -86,8 +86,9 @@ class Sessions:
                 if base.name == "workspaces" and state["config"]["backend"] == "demo":
                     continue
                 relative = directory.relative_to(self.root).as_posix()
-                entries.append({"id": digest(relative)[:16], "path": relative, "state": state,
-                                "fingerprint": digest(state)})
+                entries.append(
+                    {"id": digest(relative)[:16], "path": relative, "state": state, "fingerprint": digest(state)}
+                )
         return entries
 
     def menu(self):
@@ -111,8 +112,14 @@ class Sessions:
             proposals = []
             for job in state["jobs"]:
                 if job["kind"] == "plan" and job["status"] == "done":
-                    proposals.append({"job": job["id"], "cycle": job["cycle"], "proposal": job["result"],
-                                      "hash": digest(job["result"])})
+                    proposals.append(
+                        {
+                            "job": job["id"],
+                            "cycle": job["cycle"],
+                            "proposal": job["result"],
+                            "hash": digest(job["result"]),
+                        }
+                    )
             plan = state.get("proposal") or (proposals[-1]["proposal"] if proposals else None)
             disabled = can_continue(state)
             choices = [{"id": action, "label": label, "available": True} for action, label in ACTIONS.items()]
@@ -123,42 +130,75 @@ class Sessions:
                     choice.update(available=False, reason="保存済みの方針がまだありません")
                 if choice["id"] == "reselect" and not state.get("candidates"):
                     choice.update(available=False, reason="保存済み候補がまだありません")
-            projects.append({"id": entry["id"], "name": state["config"]["name"], "path": entry["path"],
-                             "fingerprint": entry["fingerprint"], "phase": state["phase"], "cycle": state["cycle"],
-                             "topic": state["answers"].get("topic"), "interest": state["answers"].get("interest"),
-                             "plan": plan, "plan_versions": proposals, "candidates": state.get("candidates", []),
-                             "last_results": state["history"][-1:] , "settings": state["config"],
-                             "paused": state["paused"],
-                             "remaining": {"seconds": remaining,
-                                           "agent_calls": max(0, state["config"]["max_agent_calls"]-state["agent_calls"]),
-                                           "runs": max(0, state["config"]["max_runs"]-state["runs"])},
-                             "unfinished": [{"id": j["id"], "kind": j["kind"], "status": j["status"], "error": j["error"]}
-                                            for j in state["jobs"] if j["status"] in ("pending", "running", "failed")],
-                             "choices": choices})
-        menu = {"kind": "resume" if projects else "setup", "projects": projects, "last_selection": last_selection,
-                "start_options": [{"id": "new", "label": "新しい研究を始める"},
-                                  {"id": "import", "label": "既存の研究・実験を取り込む"}],
-                "opening": "前回の方針と進捗を確認して、今回の進め方を選びましょう。" if projects else
-                           "研究を始めましょう。どんなテーマに関心がありますか？ 特に気になっていることも教えてください。",
-                "first_questions": dict(list(QUESTIONS.items())[:2]) if not projects else {},
-                "instruction": "ユーザーへコマンド入力を求めず、会話で回答・選択を得る。選択までは実験を起動しない。"}
+            projects.append(
+                {
+                    "id": entry["id"],
+                    "name": state["config"]["name"],
+                    "path": entry["path"],
+                    "fingerprint": entry["fingerprint"],
+                    "phase": state["phase"],
+                    "cycle": state["cycle"],
+                    "topic": state["answers"].get("topic"),
+                    "interest": state["answers"].get("interest"),
+                    "plan": plan,
+                    "plan_versions": proposals,
+                    "candidates": state.get("candidates", []),
+                    "last_results": state["history"][-1:],
+                    "settings": state["config"],
+                    "paused": state["paused"],
+                    "remaining": {
+                        "seconds": remaining,
+                        "agent_calls": max(0, state["config"]["max_agent_calls"] - state["agent_calls"]),
+                        "runs": max(0, state["config"]["max_runs"] - state["runs"]),
+                    },
+                    "unfinished": [
+                        {"id": j["id"], "kind": j["kind"], "status": j["status"], "error": j["error"]}
+                        for j in state["jobs"]
+                        if j["status"] in ("pending", "running", "failed")
+                    ],
+                    "choices": choices,
+                }
+            )
+        menu = {
+            "kind": "resume" if projects else "setup",
+            "projects": projects,
+            "last_selection": last_selection,
+            "start_options": [
+                {"id": "new", "label": "新しい研究を始める"},
+                {"id": "import", "label": "既存の研究・実験を取り込む"},
+            ],
+            "opening": "前回の方針と進捗を確認して、今回の進め方を選びましょう。"
+            if projects
+            else "研究を始めましょう。どんなテーマに関心がありますか？ 特に気になっていることも教えてください。",
+            "first_questions": dict(list(QUESTIONS.items())[:2]) if not projects else {},
+            "instruction": "ユーザーへコマンド入力を求めず、会話で回答・選択を得る。選択までは実験を起動しない。",
+        }
         if len(projects) == 1 and not projects[0]["plan"] and projects[0]["phase"] in ("interview", "questions"):
             questions = Engine(self.root / projects[0]["path"]).questions()
-            menu.update(kind="setup_resume", first_questions=dict(list(questions.items())[:2]),
-                        opening=f"「{projects[0]['name']}」のセットアップが途中です。" +
-                                (next(iter(questions.values())) if questions else "回答済みの内容から深掘り・方針提案へ進めます。"))
+            menu.update(
+                kind="setup_resume",
+                first_questions=dict(list(questions.items())[:2]),
+                opening=f"「{projects[0]['name']}」のセットアップが途中です。"
+                + (next(iter(questions.values())) if questions else "回答済みの内容から深掘り・方針提案へ進めます。"),
+            )
         return menu
 
     def open(self):
         menu = self.menu()
-        session = {"id": uuid.uuid4().hex, "status": "awaiting_choice", "selection": None,
-                   "snapshots": {p["id"]: p["fingerprint"] for p in menu["projects"]}}
+        session = {
+            "id": uuid.uuid4().hex,
+            "status": "awaiting_choice",
+            "selection": None,
+            "snapshots": {p["id"]: p["fingerprint"] for p in menu["projects"]},
+        }
         now = time.time()
         with self.db(create=True) as db:
             db.execute("INSERT INTO sessions VALUES (?,?,?)", (session["id"], now, dump(session)))
-            db.execute("DELETE FROM sessions WHERE created < ? AND id NOT IN "
-                       "(SELECT id FROM sessions ORDER BY created DESC LIMIT ?)",
-                       (now - SESSION_MAX_AGE_SECONDS, SESSION_KEEP))
+            db.execute(
+                "DELETE FROM sessions WHERE created < ? AND id NOT IN "
+                "(SELECT id FROM sessions ORDER BY created DESC LIMIT ?)",
+                (now - SESSION_MAX_AGE_SECONDS, SESSION_KEEP),
+            )
         self._remove_stale_staging(now)
         return dict(menu, session_id=session["id"])
 
@@ -167,8 +207,12 @@ class Sessions:
         if not staging.is_dir() or staging.is_symlink():
             return
         for directory in staging.iterdir():
-            if (directory.is_dir() and not directory.is_symlink() and directory.name.startswith("study-")
-                    and now - directory.stat().st_mtime > STAGING_MAX_AGE_SECONDS):
+            if (
+                directory.is_dir()
+                and not directory.is_symlink()
+                and directory.name.startswith("study-")
+                and now - directory.stat().st_mtime > STAGING_MAX_AGE_SECONDS
+            ):
                 shutil.rmtree(directory, ignore_errors=True)
 
     def import_study(self, session_id, source, paths, expected_hash, name, context, settings=None):
@@ -200,7 +244,11 @@ class Sessions:
             session.update(status="selected", selection=selection)
             db.execute("UPDATE sessions SET body=? WHERE id=?", (dump(session), session_id))
         Engine(destination).export()
-        return dict(selection, session_id=session_id, next_step="取り込み内容と未回答項目を確認し、次の実験方針を提案する。既存コードは自動実行しない。")
+        return dict(
+            selection,
+            session_id=session_id,
+            next_step="取り込み内容と未回答項目を確認し、次の実験方針を提案する。既存コードは自動実行しない。",
+        )
 
     @staticmethod
     def _build_import(staging, config, inspection, context):
@@ -211,10 +259,14 @@ class Sessions:
             state = engine.store.state(research_db)
             state["answers"] = context["answers"]
             state["imported_research"] = {
-                "summary": context["summary"], "source": inspection["source"],
-                "manifest": "imports/MANIFEST.json", "context": "imports/CONTEXT.md", "hash": inspection["hash"],
+                "summary": context["summary"],
+                "source": inspection["source"],
+                "manifest": "imports/MANIFEST.json",
+                "context": "imports/CONTEXT.md",
+                "hash": inspection["hash"],
                 "files": [dict(f, snapshot="imports/source/" + f["path"]) for f in inspection["files"]],
-                "verification": "未再実行・過去資料として取り込み"}
+                "verification": "未再実行・過去資料として取り込み",
+            }
             engine.store.save(research_db, state)
             engine.store.event(research_db, "research_imported", state["imported_research"])
 
@@ -225,15 +277,25 @@ class Sessions:
             raise LoopError("不明なセッションです。入口を開き直してください")
         return json.loads(row[0])
 
-    def select(self, session_id, action, project_id=None, name=None, settings=None, feedback="",
-               candidate_ids=None, plan_job=None):
+    def select(
+        self,
+        session_id,
+        action,
+        project_id=None,
+        name=None,
+        settings=None,
+        feedback="",
+        candidate_ids=None,
+        plan_job=None,
+    ):
         if action not in ACTIONS:
             raise LoopError("選択肢が不明です")
         settings = settings or {}
         if not isinstance(settings, dict):
             raise LoopError("設定変更はJSONオブジェクトが必要です")
-        if action in ("continue", "review", "improve") and (settings or feedback or candidate_ids
-                                                            or plan_job is not None):
+        if action in ("continue", "review", "improve") and (
+            settings or feedback or candidate_ids or plan_job is not None
+        ):
             raise LoopError("設定・候補・方針を変更する場合は分岐を選択してください")
         with self.db() as db:
             session = self._read(db, session_id)
@@ -249,8 +311,11 @@ class Sessions:
             selection = {"action": action, "project_id": target_id, "path": path, "mode": mode}
             session.update(status="selected", selection=selection)
             db.execute("UPDATE sessions SET body=? WHERE id=?", (dump(session), session_id))
-            return dict(selection, session_id=session_id,
-                        next_step="状態を確認し、保存済みの段階から会話を進める。新しい計画は改めて提示する。")
+            return dict(
+                selection,
+                session_id=session_id,
+                next_step="状態を確認し、保存済みの段階から会話を進める。新しい計画は改めて提示する。",
+            )
 
     def _selected_source(self, session, project_id, action):
         source = next((e for e in self.catalog() if e["id"] == project_id), None)
@@ -288,8 +353,9 @@ class Sessions:
             if not old_plan:
                 raise LoopError("修正する方針がありません")
             # 方針を作った時点の候補を参照し、別サイクルの同名IDと混同しない。
-            source_job = next((j for j in reversed(source["state"]["jobs"])
-                               if j["kind"] == "plan" and j["result"] == old_plan), None)
+            source_job = next(
+                (j for j in reversed(source["state"]["jobs"]) if j["kind"] == "plan" and j["result"] == old_plan), None
+            )
             selected = source_job["payload"]["candidates"] if source_job else []
             if not selected or cfg["experiments_per_cycle"] > len(selected):
                 raise LoopError("元の候補数を超える変更はbranchで候補から生成してください")
@@ -319,17 +385,31 @@ class Sessions:
             state = engine.store.state(research_db)
             state["answers"] = {k: v for k, v in previous["answers"].items() if action != "branch" or k in QUESTIONS}
             state["prior_research"] = {
-                "path": source["path"], "fingerprint": source["fingerprint"], "action": action,
-                "feedback": feedback, "proposal": old_plan, "answers": previous["answers"],
-                "deepening": previous.get("deepening"), "history": compact_history(previous["history"]),
-                "shared_source_hash": digest(shared)}
+                "path": source["path"],
+                "fingerprint": source["fingerprint"],
+                "action": action,
+                "feedback": feedback,
+                "proposal": old_plan,
+                "answers": previous["answers"],
+                "deepening": previous.get("deepening"),
+                "history": compact_history(previous["history"]),
+                "shared_source_hash": digest(shared),
+            }
             if previous.get("imported_research"):
                 state["prior_research"]["imported_research"] = previous["imported_research"]
             if action in ("revise", "reselect"):
                 state.update(phase="planning", cycle=1, candidates=selected, deepening=previous.get("deepening"))
-                engine.store.job(research_db, 1, "plan", {
-                    "candidates": selected, "previous_proposal": old_plan, "feedback": feedback,
-                    "user_selected_candidate_ids": candidate_ids})
+                engine.store.job(
+                    research_db,
+                    1,
+                    "plan",
+                    {
+                        "candidates": selected,
+                        "previous_proposal": old_plan,
+                        "feedback": feedback,
+                        "user_selected_candidate_ids": candidate_ids,
+                    },
+                )
             engine.store.event(research_db, "branched", {"source": source["path"], "action": action})
             engine.store.save(research_db, state)
 
@@ -341,8 +421,22 @@ class Sessions:
             selected = session["selection"]
             if selected["mode"] == "read_only" and command not in ("status", "questions", "doctor"):
                 raise LoopError("結果を見るモードです。実験・状態の変更は別の入口で選んでください")
-            if selected["mode"] == "skills" and command not in ("status", "doctor", "export", "skill-next", "skill-submit",
-                    "skill-run", "skill-accept", "skill-reject", "skill-revise", "skill-disable", "skill-fail", "skill-recover", "skill-retry", "skill-resume"):
+            if selected["mode"] == "skills" and command not in (
+                "status",
+                "doctor",
+                "export",
+                "skill-next",
+                "skill-submit",
+                "skill-run",
+                "skill-accept",
+                "skill-reject",
+                "skill-revise",
+                "skill-disable",
+                "skill-fail",
+                "skill-recover",
+                "skill-retry",
+                "skill-resume",
+            ):
                 raise LoopError("スキル改善モードでは研究実験を操作できません")
             path = (self.root / selected["path"]).resolve()
             if not path.is_relative_to(self.root):

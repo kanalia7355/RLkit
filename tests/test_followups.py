@@ -41,8 +41,15 @@ class FollowupTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "研究"
 
     def accepted(self, **overrides):
-        cfg = {"backend": "demo", "seeds": [1, 2, 3], "candidate_count": 4, "proposal_workers": 2,
-               "experiments_per_cycle": 2, "max_cycles": 2, "autonomy": "bounded"}
+        cfg = {
+            "backend": "demo",
+            "seeds": [1, 2, 3],
+            "candidate_count": 4,
+            "proposal_workers": 2,
+            "experiments_per_cycle": 2,
+            "max_cycles": 2,
+            "autonomy": "bounded",
+        }
         cfg.update(overrides)
         initialize(self.root, cfg)
         engine = Engine(self.root)
@@ -139,6 +146,7 @@ class FollowupTests(unittest.TestCase):
         def legacy(body):
             body["history"] = history
             del body["config"]["max_skill_calls"]
+
         edit_state(self.root, legacy)
         state = Engine(self.root).status()
         self.assertEqual(state["history"], history)

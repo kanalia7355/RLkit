@@ -53,8 +53,10 @@ QUESTIONS = {
 
 def read_json(path):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8-sig"),
-                          parse_constant=lambda x: (_ for _ in ()).throw(LoopError(f"非有限値: {x}")))
+        return json.loads(
+            Path(path).read_text(encoding="utf-8-sig"),
+            parse_constant=lambda x: (_ for _ in ()).throw(LoopError(f"非有限値: {x}")),
+        )
     except (OSError, json.JSONDecodeError) as exc:
         raise LoopError(f"JSONを読めません: {path}: {exc}") from exc
 

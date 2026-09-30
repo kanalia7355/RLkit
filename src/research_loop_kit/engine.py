@@ -42,13 +42,18 @@ class Engine:
 
     @staticmethod
     def _failed_attempts(db):
-        return [dict(row, body=json.loads(row["body"])) for row in db.execute(
-            "SELECT job,attempt,body FROM attempts WHERE status='failed' ORDER BY job,attempt")]
+        return [
+            dict(row, body=json.loads(row["body"]))
+            for row in db.execute("SELECT job,attempt,body FROM attempts WHERE status='failed' ORDER BY job,attempt")
+        ]
 
     def questions(self):
         state = self.status()
-        questions = QUESTIONS if state["phase"] == "interview" else {
-            x["id"]: x["question"] for x in state.get("deepening", {}).get("questions", [])}
+        questions = (
+            QUESTIONS
+            if state["phase"] == "interview"
+            else {x["id"]: x["question"] for x in state.get("deepening", {}).get("questions", [])}
+        )
         return {k: v for k, v in questions.items() if k not in state["answers"]}
 
     def answer(self, answers):
@@ -58,8 +63,9 @@ class Engine:
             state = self.store.state(db)
             if state["phase"] not in ("interview", "questions"):
                 raise LoopError("回答を受け付ける段階ではありません")
-            allowed = set(QUESTIONS) if state["phase"] == "interview" else {
-                x["id"] for x in state["deepening"]["questions"]}
+            allowed = (
+                set(QUESTIONS) if state["phase"] == "interview" else {x["id"] for x in state["deepening"]["questions"]}
+            )
             if set(answers) - allowed:
                 raise LoopError(f"不明な質問ID: {set(answers) - allowed}")
             for key, value in answers.items():
@@ -105,9 +111,12 @@ class Engine:
         offset = 0
         lenses = ["新規性・機序", "反証・対照", "実施可能性・低コスト", "頑健性・適用限界"]
         for i in range(cfg["proposal_workers"]):
-            count = cfg["candidate_count"] // cfg["proposal_workers"] + (i < cfg["candidate_count"] % cfg["proposal_workers"])
-            self.store.job(db, state["cycle"], "ideas", {"count": count, "offset": offset,
-                                                       "lens": lenses[i % len(lenses)]})
+            count = cfg["candidate_count"] // cfg["proposal_workers"] + (
+                i < cfg["candidate_count"] % cfg["proposal_workers"]
+            )
+            self.store.job(
+                db, state["cycle"], "ideas", {"count": count, "offset": offset, "lens": lenses[i % len(lenses)]}
+            )
             offset += count
 
     def accept(self, proposal_hash):
@@ -129,8 +138,12 @@ class Engine:
             state = self.store.state(db)
             if state["phase"] != "approval":
                 raise LoopError("方針提案への回答待ちでだけ修正できます")
-            self.store.job(db, state["cycle"], "plan", {"candidates": state["candidates"],
-                                                       "previous_proposal": state["proposal"], "feedback": feedback})
+            self.store.job(
+                db,
+                state["cycle"],
+                "plan",
+                {"candidates": state["candidates"], "previous_proposal": state["proposal"], "feedback": feedback},
+            )
             state["phase"] = "planning"
             self.store.event(db, "revision_requested", {"feedback": feedback})
             self.store.save(db, state)
@@ -141,9 +154,17 @@ class Engine:
         # 全文はpayloadへ入れず、内容アドレスの版として一度だけ保存する（内容一致なら再利用）。
         version = shared_source.store_version(self.root, shared)
         for experiment in state["proposal"]["experiments"]:
-            self.store.job(db, state["cycle"], "implement", {
-                "experiment": experiment, "proposal_hash": state["proposal_hash"],
-                "shared_source_hash": version, "shared_source_files": shared_source.file_hashes(shared)})
+            self.store.job(
+                db,
+                state["cycle"],
+                "implement",
+                {
+                    "experiment": experiment,
+                    "proposal_hash": state["proposal_hash"],
+                    "shared_source_hash": version,
+                    "shared_source_files": shared_source.file_hashes(shared),
+                },
+            )
 
     def pause(self):
         with self.store.transaction() as db:
@@ -173,14 +194,22 @@ class Engine:
             valid_statuses = ("approval",) if decision == "accept" else ("approval", "building", "active", "disabled")
             if not candidate or candidate["status"] not in valid_statuses:
                 raise LoopError("承認待ちのスキル設計を指定してください")
-            if any(j["kind"] == "skill_build" and j["payload"]["candidate_id"] == candidate_id
-                   and j["status"] in ("pending", "running") for j in self.store.jobs(db)):
+            if any(
+                j["kind"] == "skill_build"
+                and j["payload"]["candidate_id"] == candidate_id
+                and j["status"] in ("pending", "running")
+                for j in self.store.jobs(db)
+            ):
                 raise LoopError("実装作業が未完了です。停止・失敗を確認してから設計を変更してください")
             if design_hash != candidate["design_hash"]:
                 raise LoopError("提示済みの最新スキル設計ハッシュが必要です")
             if decision == "accept":
-                self.store.job(db, 0, "skill_build", {"candidate_id": candidate_id,
-                    "design": candidate["design"], "design_hash": design_hash})
+                self.store.job(
+                    db,
+                    0,
+                    "skill_build",
+                    {"candidate_id": candidate_id, "design": candidate["design"], "design_hash": design_hash},
+                )
                 candidate["status"] = "building"
             elif decision == "reject":
                 candidate.update(status="rejected", feedback=feedback)
@@ -270,8 +299,10 @@ class Engine:
         if job["kind"] != "execute":
             counter = "skill_calls" if job["kind"] in evolution.KINDS else "agent_calls"
             state[counter] = state.get(counter, 0) + 1
-        db.execute("UPDATE jobs SET status='running',attempt=?,token=?,started=?,error=NULL WHERE id=?",
-                   (job["attempt"], token, job["started"], job["id"]))
+        db.execute(
+            "UPDATE jobs SET status='running',attempt=?,token=?,started=?,error=NULL WHERE id=?",
+            (job["attempt"], token, job["started"], job["id"]),
+        )
         db.execute("INSERT INTO attempts VALUES (?,?,?,'running',NULL)", (job["id"], job["attempt"], token))
         self.store.save(db, state)
         self.store.event(db, "claimed", {"id": job["id"], "token": token})
@@ -287,17 +318,26 @@ class Engine:
             prompt = directory / "prompt.md"
             if not prompt.exists():
                 write_new(prompt, render(job, self.status(), directory / "response.json", root=self.root))
-        return {"id": job["id"], "token": job["token"], "kind": job["kind"],
-                "directory": str(directory), "prompt": str(directory / "prompt.md"),
-                "response": str(directory / "response.json")}
+        return {
+            "id": job["id"],
+            "token": job["token"],
+            "kind": job["kind"],
+            "directory": str(directory),
+            "prompt": str(directory / "prompt.md"),
+            "response": str(directory / "response.json"),
+        }
 
     def validate_result(self, job, result, state):
         if not isinstance(result, dict):
             raise LoopError("応答はJSONオブジェクトが必要です")
         validator = {
-            "skill_design": self._check_skill_design, "skill_build": self._check_skill_build,
-            "deepen": self._check_deepen, "ideas": self._check_ideas, "plan": self._check_plan,
-            "implement": self._check_implement, "review": self._check_review,
+            "skill_design": self._check_skill_design,
+            "skill_build": self._check_skill_build,
+            "deepen": self._check_deepen,
+            "ideas": self._check_ideas,
+            "plan": self._check_plan,
+            "implement": self._check_implement,
+            "review": self._check_review,
         }.get(job["kind"])
         if validator is None:
             raise LoopError("execute結果は実測経路からのみ登録できます")
@@ -311,9 +351,14 @@ class Engine:
 
     @staticmethod
     def _check_skill_build(job, result, state):
-        candidate = next((c for c in state.get("skill_candidates", [])
-                          if c["id"] == job["payload"]["candidate_id"]), None)
-        if not candidate or candidate["status"] != "building" or candidate["design_hash"] != job["payload"]["design_hash"]:
+        candidate = next(
+            (c for c in state.get("skill_candidates", []) if c["id"] == job["payload"]["candidate_id"]), None
+        )
+        if (
+            not candidate
+            or candidate["status"] != "building"
+            or candidate["design_hash"] != job["payload"]["design_hash"]
+        ):
             raise LoopError("この実装に対する設計承認が失効しています")
         evolution.validate_build(result, job["payload"]["design"])
 
@@ -348,14 +393,28 @@ class Engine:
         known = {c["id"] for c in state["candidates"]}
         seen = set()
         for i, plan in enumerate(plans):
-            required(plan, ["candidate_id", "title", "hypothesis", "method", "baseline", "treatment",
-                            "metric", "direction", "success_rule", "stop_rule", "limitations"])
+            required(
+                plan,
+                [
+                    "candidate_id",
+                    "title",
+                    "hypothesis",
+                    "method",
+                    "baseline",
+                    "treatment",
+                    "metric",
+                    "direction",
+                    "success_rule",
+                    "stop_rule",
+                    "limitations",
+                ],
+            )
             if plan["candidate_id"] not in known or plan["candidate_id"] in seen:
                 raise LoopError("未提案または重複した候補です")
             seen.add(plan["candidate_id"])
             if plan["direction"] not in ("minimize", "maximize") or number(plan.get("min_effect"), "min_effect") < 0:
                 raise LoopError("主指標の方向または効果量が不正です")
-            plan["id"] = f"e{i+1}"
+            plan["id"] = f"e{i + 1}"
 
     def _check_implement(self, job, result, state):
         required(result, ["notes"])
@@ -426,8 +485,10 @@ class Engine:
 
     def _finish(self, db, state, job, result):
         db.execute("UPDATE jobs SET status='done',result=? WHERE id=?", (dump(result), job["id"]))
-        db.execute("UPDATE attempts SET status='done',body=? WHERE job=? AND attempt=? AND status='running'",
-                   (dump(result), job["id"], job["attempt"]))
+        db.execute(
+            "UPDATE attempts SET status='done',body=? WHERE job=? AND attempt=? AND status='running'",
+            (dump(result), job["id"], job["attempt"]),
+        )
         self.store.event(db, "completed", {"id": job["id"], "attempt": job["attempt"], "result_hash": digest(result)})
         self._advance(db, state, job, result)
         self.store.save(db, state)
@@ -438,8 +499,10 @@ class Engine:
             if not job or job["status"] != "running" or job["token"] != token:
                 raise LoopError("実行中の正しいtokenが必要です")
             db.execute("UPDATE jobs SET status='failed',error=? WHERE id=?", (reason, job_id))
-            db.execute("UPDATE attempts SET status='failed',body=? WHERE job=? AND attempt=?",
-                       (dump({"error": reason}), job_id, job["attempt"]))
+            db.execute(
+                "UPDATE attempts SET status='failed',body=? WHERE job=? AND attempt=?",
+                (dump({"error": reason}), job_id, job["attempt"]),
+            )
             self.store.event(db, "failed", {"id": job_id, "error": reason})
 
     def retry(self, job_id):
@@ -461,8 +524,12 @@ class Engine:
             job = next((j for j in self.store.jobs(db) if j["id"] == job_id), None)
             if not job or job["status"] != "failed" or job["kind"] not in ("implement", "execute"):
                 raise LoopError("実装・実行の失敗だけを未支持として分析へ送れます")
-            result = {"id": job["payload"]["experiment"]["id"], "status": "failed",
-                      "threshold_met": False, "error": job["error"]}
+            result = {
+                "id": job["payload"]["experiment"]["id"],
+                "status": "failed",
+                "threshold_met": False,
+                "error": job["error"],
+            }
             self.store.event(db, "failed_experiment_included", {"id": job_id, "error": job["error"]})
             self._finish(db, state, job, result)
 
@@ -485,7 +552,7 @@ class Engine:
             for j in jobs:
                 if j["kind"] == "ideas":
                     candidates += j["result"]["candidates"]
-            state["candidates"] = [dict(c, id=f"c{i+1}") for i, c in enumerate(candidates)]
+            state["candidates"] = [dict(c, id=f"c{i + 1}") for i, c in enumerate(candidates)]
             self.store.job(db, state["cycle"], "plan", {"candidates": state["candidates"]})
             state["phase"] = "planning"
         elif kind == "plan":
@@ -495,9 +562,17 @@ class Engine:
                 self._implement(db, state)
         elif kind == "implement":
             if result.get("status") != "failed":
-                self.store.job(db, state["cycle"], "execute", {"experiment": job["payload"]["experiment"],
-                                                              "implementation": result, "implementation_job": job["id"],
-                                                              "proposal_hash": job["payload"]["proposal_hash"]})
+                self.store.job(
+                    db,
+                    state["cycle"],
+                    "execute",
+                    {
+                        "experiment": job["payload"]["experiment"],
+                        "implementation": result,
+                        "implementation_job": job["id"],
+                        "proposal_hash": job["payload"]["proposal_hash"],
+                    },
+                )
             self._maybe_review(db, state)
         elif kind == "execute":
             self._maybe_review(db, state)
@@ -510,11 +585,21 @@ class Engine:
         照合に失敗した場合はDBトランザクションごと巻き戻り、同じレビューを修正・再送できる。
         報告書の本文とハッシュはここで確定し、ファイルへの書き込みはcommit直前に行う。
         """
-        entry = {"cycle": state["cycle"], "proposal_hash": state["proposal_hash"], "proposal": state["proposal"],
-                 "direction": state["proposal"]["direction"], "results": results, "review": review}
+        entry = {
+            "cycle": state["cycle"],
+            "proposal_hash": state["proposal_hash"],
+            "proposal": state["proposal"],
+            "direction": state["proposal"]["direction"],
+            "results": results,
+            "review": review,
+        }
         checks = verify_evidence(self.root, entry)
-        view = dict(state, history=self.store.history(db) + [entry], jobs=self.store.jobs(db),
-                    failed_attempts=self._failed_attempts(db))
+        view = dict(
+            state,
+            history=self.store.history(db) + [entry],
+            jobs=self.store.jobs(db),
+            failed_attempts=self._failed_attempts(db),
+        )
         documents = self.render_documents(view)
         gate = {"cycle": state["cycle"], "evidence": checks, "documents": document_hashes(documents)}
         entry["completion_gate"] = gate
@@ -551,8 +636,16 @@ class Engine:
         for j in work:
             if j["kind"] == "execute" or j["result"].get("status") == "failed":
                 results.append(j["result"])
-        self.store.job(db, state["cycle"], "review", {"results": results, "proposal": state["proposal"],
-                                                       "implementations": [j["result"] for j in work if j["kind"] == "implement"]})
+        self.store.job(
+            db,
+            state["cycle"],
+            "review",
+            {
+                "results": results,
+                "proposal": state["proposal"],
+                "implementations": [j["result"] for j in work if j["kind"] == "implement"],
+            },
+        )
         state["phase"] = "reviewing"
 
     def execute(self, job):
@@ -566,10 +659,17 @@ class Engine:
         sources = shared_source.code_files(self.root, implementation)
         for name, code in sources.items():
             write_new(code_dir / name, code)
-        manifest = {"experiment": experiment, "proposal_hash": job["payload"]["proposal_hash"],
-                    "code_hash": digest(sources), "seeds": cfg["seeds"],
-                    "python": sys.version, "platform": platform.platform(), "started": time.time(),
-                    "job_id": job["id"], "attempt": job["attempt"]}
+        manifest = {
+            "experiment": experiment,
+            "proposal_hash": job["payload"]["proposal_hash"],
+            "code_hash": digest(sources),
+            "seeds": cfg["seeds"],
+            "python": sys.version,
+            "platform": platform.platform(),
+            "started": time.time(),
+            "job_id": job["id"],
+            "attempt": job["attempt"],
+        }
         manifest["code_audit"] = inspect_code(sources)
         if "shared_source_hash" in implementation:
             manifest["shared_source_hash"] = implementation["shared_source_hash"]
@@ -594,10 +694,14 @@ class Engine:
             run_dir.mkdir()
             output = run_dir / "metrics.json"
             start = time.monotonic()
-            process_run([sys.executable, str(code_dir / "experiment.py"), "--seed", str(seed), "--output", str(output)],
-                        run_dir, run_dir / "stdout.log", run_dir / "stderr.log",
-                        min(cfg["run_timeout_seconds"], remaining),
-                        env_overrides={"PYTHONPATH": str(code_dir / "src"), "PYTHONDONTWRITEBYTECODE": "1"})
+            process_run(
+                [sys.executable, str(code_dir / "experiment.py"), "--seed", str(seed), "--output", str(output)],
+                run_dir,
+                run_dir / "stdout.log",
+                run_dir / "stderr.log",
+                min(cfg["run_timeout_seconds"], remaining),
+                env_overrides={"PYTHONPATH": str(code_dir / "src"), "PYTHONDONTWRITEBYTECODE": "1"},
+            )
             metrics = read_json(output)
             if not isinstance(metrics, dict) or set(metrics) != {"seed", "baseline", "treatment"}:
                 raise LoopError("測定値の形式はseed/baseline/treatmentだけのオブジェクトです")
@@ -608,20 +712,28 @@ class Engine:
             metrics["wall_seconds"] = time.monotonic() - start
             values.append(metrics)
             elapsed = time.time() - manifest["started"]
-            progress = {"completed_seeds": [v["seed"] for v in values],
-                        "remaining_seeds": cfg["seeds"][len(values):],
-                        "elapsed_seconds": elapsed,
-                        "eta_seconds_estimate": elapsed / len(values) * (len(cfg["seeds"]) - len(values))}
+            progress = {
+                "completed_seeds": [v["seed"] for v in values],
+                "remaining_seeds": cfg["seeds"][len(values) :],
+                "elapsed_seconds": elapsed,
+                "eta_seconds_estimate": elapsed / len(values) * (len(cfg["seeds"]) - len(values)),
+            }
             write_atomic(directory / "progress.json", dump(progress) + "\n")
             with self.store.transaction() as db:
                 self.store.event(db, "seed_completed", {"id": job["id"], "attempt": job["attempt"], **progress})
         after_code = shared_source.read_code(code_dir)
         if digest(after_code) != manifest["code_hash"]:
             raise LoopError("実行中に事前登録したコードが変更されました")
-        result = {"id": experiment["id"], "status": "measured", "n": len(values),
-                  **summarize_effects(values, experiment),
-                  "statistical_test": "未実施（記述統計。effect_ci95はpaired bootstrapの参考区間）",
-                  "values": values, "evidence": directory.relative_to(self.root).as_posix(), "manifest": manifest}
+        result = {
+            "id": experiment["id"],
+            "status": "measured",
+            "n": len(values),
+            **summarize_effects(values, experiment),
+            "statistical_test": "未実施（記述統計。effect_ci95はpaired bootstrapの参考区間）",
+            "values": values,
+            "evidence": directory.relative_to(self.root).as_posix(),
+            "manifest": manifest,
+        }
         write_new(directory / "analysis.json", dump(result))
         with self.store.transaction() as db:
             state = self.store.state(db)
@@ -639,7 +751,7 @@ class Engine:
                 state = self.status()
                 timeout = state["config"]["agent_timeout_seconds"]
                 if state["started"] and job["kind"] not in (*evolution.KINDS, "review"):
-                    timeout = min(timeout, state["config"]["max_wall_seconds"] - (time.time()-state["started"]))
+                    timeout = min(timeout, state["config"]["max_wall_seconds"] - (time.time() - state["started"]))
                 if timeout <= 0:
                     raise LoopError("セッション時間の上限です")
                 result = invoke(job, state, self.ticket_dir(job), timeout)
@@ -657,9 +769,10 @@ class Engine:
         completed = []
         allowed = set() if skills_only else {"execute"}
         if not experiments_only:
-            kinds = evolution.KINDS if skills_only else ("deepen", "ideas", "plan", "implement", "review", *evolution.KINDS)
-            allowed.update(kind for kind in kinds
-                           if dict(cfg, **cfg["roles"].get(kind, {}))["backend"] != "active")
+            kinds = (
+                evolution.KINDS if skills_only else ("deepen", "ideas", "plan", "implement", "review", *evolution.KINDS)
+            )
+            allowed.update(kind for kind in kinds if dict(cfg, **cfg["roles"].get(kind, {}))["backend"] != "active")
         if not allowed:
             return []
         with ThreadPoolExecutor(max_workers=cfg["max_parallel_agents"] + cfg["max_parallel_experiments"]) as pool:
@@ -708,15 +821,35 @@ def document_hashes(documents):
 
 def proposal_document(state):
     proposal, cfg = state["proposal"], state["config"]
-    lines = [f"# 研究方針: {cfg['name']}", "", proposal["direction"], "",
-             f"提案ハッシュ: `{state['proposal_hash']}`", "",
-             f"運転設定: {cfg['autonomy']} / 最大{cfg['max_cycles']}サイクル", ""]
+    lines = [
+        f"# 研究方針: {cfg['name']}",
+        "",
+        proposal["direction"],
+        "",
+        f"提案ハッシュ: `{state['proposal_hash']}`",
+        "",
+        f"運転設定: {cfg['autonomy']} / 最大{cfg['max_cycles']}サイクル",
+        "",
+    ]
     for p in proposal["experiments"]:
-        lines += [f"## {p['id']}: {p['title']}", "", f"仮説: {p['hypothesis']}", "",
-                  f"方法: {p['method']}", "", f"比較: {p['baseline']} / {p['treatment']}", "",
-                  f"指標: {p['metric']} / {p['direction']} / 改善幅 {p['min_effect']}", "",
-                  f"判定根拠: {p['success_rule']}", "", f"停止条件: {p['stop_rule']}", "",
-                  f"限界: {p['limitations']}", ""]
+        lines += [
+            f"## {p['id']}: {p['title']}",
+            "",
+            f"仮説: {p['hypothesis']}",
+            "",
+            f"方法: {p['method']}",
+            "",
+            f"比較: {p['baseline']} / {p['treatment']}",
+            "",
+            f"指標: {p['metric']} / {p['direction']} / 改善幅 {p['min_effect']}",
+            "",
+            f"判定根拠: {p['success_rule']}",
+            "",
+            f"停止条件: {p['stop_rule']}",
+            "",
+            f"限界: {p['limitations']}",
+            "",
+        ]
     lines += ["## 未解決事項", "", *(proposal["open_questions"] or ["申告なし"])]
     return "\n".join(lines) + "\n"
 
@@ -727,30 +860,65 @@ def _ci_text(result):
 
 
 def cycle_document(state, entry):
-    lines = [f"# サイクル {entry['cycle']} — {state['config']['name']}", "", entry["direction"], "",
-             "測定の差は記述統計です。95%区間は同一seedの差分に対するpaired bootstrapの参考値で、"
-             "seed数が少ないと過小になります。統計的有意差や一般化を自動的に意味しません。", "",
-             "| 実験 | 状態 | 対照平均 | 介入平均 | 改善幅平均 | 改善幅95%区間 | seed数 | 閾値到達 |",
-             "|---|---|---:|---:|---:|---:|---:|---|"]
+    lines = [
+        f"# サイクル {entry['cycle']} — {state['config']['name']}",
+        "",
+        entry["direction"],
+        "",
+        "測定の差は記述統計です。95%区間は同一seedの差分に対するpaired bootstrapの参考値で、"
+        "seed数が少ないと過小になります。統計的有意差や一般化を自動的に意味しません。",
+        "",
+        "| 実験 | 状態 | 対照平均 | 介入平均 | 改善幅平均 | 改善幅95%区間 | seed数 | 閾値到達 |",
+        "|---|---|---:|---:|---:|---:|---:|---|",
+    ]
     for r in entry["results"]:
-        lines.append(f"| {r['id']} | {r['status']} | {r.get('baseline_mean', '—')} | {r.get('treatment_mean', '—')}"
-                     f" | {r.get('effect_mean', '—')} | {_ci_text(r)} | {r.get('n', 0)} | {r['threshold_met']} |")
+        lines.append(
+            f"| {r['id']} | {r['status']} | {r.get('baseline_mean', '—')} | {r.get('treatment_mean', '—')}"
+            f" | {r.get('effect_mean', '—')} | {_ci_text(r)} | {r.get('n', 0)} | {r['threshold_met']} |"
+        )
     for review in entry["review"]["experiments"]:
         r = next(x for x in entry["results"] if x["id"] == review["id"])
-        lines += ["", f"## {review['id']}: {review['assessment']}", "", review["interpretation"], "",
-                  f"限界: {review['limitations']}", "", f"証跡: `{r.get('evidence', '実行前失敗')}`", "",
-                  f"エラー: {r.get('error', 'なし')}"]
-    lines += ["", "## 次の問い", "", *[f"- {q}" for q in entry["review"]["next_questions"]],
-              "", "## 再利用する知見", "", *[f"- {q}" for q in entry["review"]["reusable_lessons"]]]
+        lines += [
+            "",
+            f"## {review['id']}: {review['assessment']}",
+            "",
+            review["interpretation"],
+            "",
+            f"限界: {review['limitations']}",
+            "",
+            f"証跡: `{r.get('evidence', '実行前失敗')}`",
+            "",
+            f"エラー: {r.get('error', 'なし')}",
+        ]
+    lines += [
+        "",
+        "## 次の問い",
+        "",
+        *[f"- {q}" for q in entry["review"]["next_questions"]],
+        "",
+        "## 再利用する知見",
+        "",
+        *[f"- {q}" for q in entry["review"]["reusable_lessons"]],
+    ]
     return "\n".join(lines) + "\n"
 
 
 def checks_document(entry):
-    lines = [f"# サイクル {entry['cycle']} 検証記録", "",
-             "完了確定前に、事前登録・コード・seed別数値・再集計・ログ存在・本文保存を照合する。",
-             "これは研究上の妥当性・検出力・動的配線を保証するものではない。", ""]
+    lines = [
+        f"# サイクル {entry['cycle']} 検証記録",
+        "",
+        "完了確定前に、事前登録・コード・seed別数値・再集計・ログ存在・本文保存を照合する。",
+        "これは研究上の妥当性・検出力・動的配線を保証するものではない。",
+        "",
+    ]
     for r in entry["results"]:
         audit = r.get("manifest", {}).get("code_audit", {})
-        lines += [f"## {r['id']}: {r['status']}", "",
-                  f"静的検査: {audit.get('status', '未実施')}", "", *audit.get("findings", []), ""]
+        lines += [
+            f"## {r['id']}: {r['status']}",
+            "",
+            f"静的検査: {audit.get('status', '未実施')}",
+            "",
+            *audit.get("findings", []),
+            "",
+        ]
     return "\n".join(lines) + "\n"

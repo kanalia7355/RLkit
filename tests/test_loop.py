@@ -26,8 +26,14 @@ class LoopTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "研究 folder"
 
     def init(self, **overrides):
-        cfg = {"backend": "demo", "seeds": [1, 2], "candidate_count": 4,
-               "proposal_workers": 2, "experiments_per_cycle": 2, "max_parallel_agents": 2}
+        cfg = {
+            "backend": "demo",
+            "seeds": [1, 2],
+            "candidate_count": 4,
+            "proposal_workers": 2,
+            "experiments_per_cycle": 2,
+            "max_parallel_agents": 2,
+        }
         cfg.update(overrides)
         initialize(self.root, cfg)
         return Engine(self.root)
@@ -69,6 +75,7 @@ class LoopTests(unittest.TestCase):
         engine = self.init(backend="active")
         engine.answer(ANSWERS)
         engine.deepen()
+
         def drain():
             while True:
                 job = engine.claim({"deepen", "ideas", "plan", "implement", "review"})
@@ -77,8 +84,21 @@ class LoopTests(unittest.TestCase):
                 ticket = engine.ticket(job)
                 response = respond(job, engine.status())
                 Path(ticket["response"]).write_text(json.dumps(response), encoding="utf-8")
-                self.assertEqual(main(["submit", str(self.root), str(job["id"]), "--token", job["token"],
-                                       "--file", ticket["response"]]), 0)
+                self.assertEqual(
+                    main(
+                        [
+                            "submit",
+                            str(self.root),
+                            str(job["id"]),
+                            "--token",
+                            job["token"],
+                            "--file",
+                            ticket["response"],
+                        ]
+                    ),
+                    0,
+                )
+
         drain()
         engine.answer({q: "比較条件を固定" for q in engine.questions()})
         engine.propose()
@@ -116,9 +136,16 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "既存の内容")
 
     def test_config_invalid_values(self):
-        for override in ({"max_cycles": True}, {"seeds": [1, 1]}, {"max_runs": -1},
-                         {"backend": "unknown"}, {"candidate_count": 1}, {"mispelled": 2},
-                         {"roles": {"review": {"backend": "unknown"}}}, {"max_wall_seconds": float("nan")}):
+        for override in (
+            {"max_cycles": True},
+            {"seeds": [1, 1]},
+            {"max_runs": -1},
+            {"backend": "unknown"},
+            {"candidate_count": 1},
+            {"mispelled": 2},
+            {"roles": {"review": {"backend": "unknown"}}},
+            {"max_wall_seconds": float("nan")},
+        ):
             with self.subTest(override=override), self.assertRaises(LoopError):
                 make_config(override)
 
@@ -211,7 +238,9 @@ class LoopTests(unittest.TestCase):
         self.assertTrue(all(r["status"] == "failed" for r in engine.status()["history"][0]["results"]))
         with engine.store.transaction() as db:
             for job in failed:
-                self.assertEqual(db.execute("SELECT status FROM attempts WHERE job=?", (job["id"],)).fetchone()[0], "failed")
+                self.assertEqual(
+                    db.execute("SELECT status FROM attempts WHERE job=?", (job["id"],)).fetchone()[0], "failed"
+                )
 
     def test_pause_prevents_claim(self):
         engine = self.init()
@@ -250,7 +279,7 @@ class LoopTests(unittest.TestCase):
 
     def test_supported_review_requires_measured_threshold(self):
         engine = self.accepted()
-        while (job := engine.claim({"implement"})):
+        while job := engine.claim({"implement"}):
             engine.work(job)
         engine.run(experiments_only=True)
         review = engine.claim({"review"})
@@ -261,18 +290,27 @@ class LoopTests(unittest.TestCase):
             engine.validate_result(changed, response, engine.status())
 
     def test_provider_role_and_argv_keep_shell_chars_literal(self):
-        cfg = make_config({"backend": "codex", "roles": {"review": {"backend": "custom",
-            "custom_command": [sys.executable, "agent.py"], "model": "x; & y"}}})
+        cfg = make_config(
+            {
+                "backend": "codex",
+                "roles": {
+                    "review": {"backend": "custom", "custom_command": [sys.executable, "agent.py"], "model": "x; & y"}
+                },
+            }
+        )
         argv = command(cfg, "review")
         self.assertEqual(argv[-1], "x; & y")
         self.assertEqual(argv[0], sys.executable)
 
     def test_real_custom_provider_response_contract(self):
         script = Path(self.temp.name) / "provider.py"
-        script.write_text('''import json
+        script.write_text(
+            """import json
 from pathlib import Path
 Path("response.json").write_text(json.dumps({"understanding":"ファイル連携の動作確認", "questions":[{"id":"q1","question":"測定対象を具体化してください"}]}), encoding="utf-8")
-''', encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
         engine = self.init(backend="custom", custom_command=[sys.executable, str(script)], deep_questions=1)
         engine.answer(ANSWERS)
         engine.deepen()
@@ -283,8 +321,13 @@ Path("response.json").write_text(json.dumps({"understanding":"ファイル連携
     def test_process_timeout(self):
         directory = Path(self.temp.name)
         with self.assertRaises(subprocess.TimeoutExpired):
-            process_run([sys.executable, "-c", "import time; time.sleep(10)"], directory,
-                        directory / "out.log", directory / "err.log", 0.1)
+            process_run(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                directory,
+                directory / "out.log",
+                directory / "err.log",
+                0.1,
+            )
 
 
 if __name__ == "__main__":

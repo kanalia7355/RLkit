@@ -37,8 +37,15 @@ class ImportTests(unittest.TestCase):
         self.context = {"summary": "既存の実験と結果から次の比較を検討する", "answers": {"topic": "既存研究の継続"}}
 
     def import_study(self, **kwargs):
-        return self.hub.import_study(self.session, self.source, self.paths, preview(self.source, self.paths)["hash"],
-                                     "継続研究", kwargs.get("context", self.context), kwargs.get("settings"))
+        return self.hub.import_study(
+            self.session,
+            self.source,
+            self.paths,
+            preview(self.source, self.paths)["hash"],
+            "継続研究",
+            kwargs.get("context", self.context),
+            kwargs.get("settings"),
+        )
 
     def test_snapshot_preserves_originals_and_never_runs_source(self):
         before = {p: (self.source / p).read_bytes() for p in self.paths}
@@ -73,8 +80,17 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(len(self.hub.catalog()), 1)
 
     def test_invalid_paths_and_private_state_are_rejected(self):
-        for path in ("../outside.md", "/absolute.md", "a/../report.md", "a\\report.md", ".env",
-                     ".rlk/state.sqlite3", ".git/config", ".claude/settings.json", "private.key"):
+        for path in (
+            "../outside.md",
+            "/absolute.md",
+            "a/../report.md",
+            "a\\report.md",
+            ".env",
+            ".rlk/state.sqlite3",
+            ".git/config",
+            ".claude/settings.json",
+            "private.key",
+        ):
             with self.subTest(path=path), self.assertRaises((LoopError, OSError)):
                 preview(self.source, [path])
 
@@ -92,8 +108,10 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(len(self.hub.catalog()), 1)
 
     def test_import_context_reaches_next_proposal_and_real_execution(self):
-        selection = self.import_study(context={"summary": "前回は更新幅を比較済み。次は頑健性を調べる。", "answers": ANSWERS},
-                                      settings={"backend": "demo", "seeds": [1], "experiments_per_cycle": 1})
+        selection = self.import_study(
+            context={"summary": "前回は更新幅を比較済み。次は頑健性を調べる。", "answers": ANSWERS},
+            settings={"backend": "demo", "seeds": [1], "experiments_per_cycle": 1},
+        )
         root = self.clone / selection["path"]
         engine = Engine(root)
         engine.deepen()
@@ -115,17 +133,34 @@ class ImportTests(unittest.TestCase):
     def test_agent_entry_import_commands(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.assertEqual(agent_main(self.clone, ['import-preview', '--source', str(self.source), '--files', *self.paths]), 0)
+            self.assertEqual(
+                agent_main(self.clone, ["import-preview", "--source", str(self.source), "--files", *self.paths]), 0
+            )
         inspection = json.loads(output.getvalue())
-        context = self.base / 'context.json'
-        context.write_text(json.dumps(self.context), encoding='utf-8')
+        context = self.base / "context.json"
+        context.write_text(json.dumps(self.context), encoding="utf-8")
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            code = agent_main(self.clone, ['import-study', self.session, '--source', str(self.source), '--files', *self.paths,
-                '--hash', inspection['hash'], '--name', '既存研究', '--context', str(context)])
+            code = agent_main(
+                self.clone,
+                [
+                    "import-study",
+                    self.session,
+                    "--source",
+                    str(self.source),
+                    "--files",
+                    *self.paths,
+                    "--hash",
+                    inspection["hash"],
+                    "--name",
+                    "既存研究",
+                    "--context",
+                    str(context),
+                ],
+            )
         self.assertEqual(code, 0)
         selected = json.loads(output.getvalue())
-        self.assertEqual(self.hub.target(self.session, 'status'), self.clone.resolve() / selected['path'])
+        self.assertEqual(self.hub.target(self.session, "status"), self.clone.resolve() / selected["path"])
 
     def test_symlinked_ancestor_is_allowed_but_links_inside_source_are_rejected(self):
         # macOSの/var -> /private/varや~/Dropboxのように、取り込み元の親がリンクでも取り込める。
@@ -137,7 +172,9 @@ class ImportTests(unittest.TestCase):
         via_link = linked_parent / "existing"
         inspection = preview(via_link, self.paths)
         self.assertEqual(inspection["source"], str(self.source.resolve()))
-        selection = self.hub.import_study(self.session, via_link, self.paths, inspection["hash"], "リンク経由", self.context)
+        selection = self.hub.import_study(
+            self.session, via_link, self.paths, inspection["hash"], "リンク経由", self.context
+        )
         self.assertTrue((self.clone / selection["path"] / "imports/source/report.md").is_file())
         # 取り込み元の内側にあるリンクは、外部のファイルを持ち込めるため拒否する。
         outside = self.base / "outside.txt"

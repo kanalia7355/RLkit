@@ -21,8 +21,10 @@ class GuardTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "研究"
-        initialize(self.root, {"backend": "demo", "seeds": [1, 2], "max_cycles": 2,
-                               "autonomy": "bounded", "experiments_per_cycle": 1})
+        initialize(
+            self.root,
+            {"backend": "demo", "seeds": [1, 2], "max_cycles": 2, "autonomy": "bounded", "experiments_per_cycle": 1},
+        )
         self.engine = Engine(self.root)
 
     def review_ready(self):
@@ -71,8 +73,16 @@ class GuardTests(unittest.TestCase):
         state = self.engine.status()
         self.assertEqual(state["cycle"], 2)
         self.assertIn("completion_gate", state["history"][0])
-        for name in ("KNOWLEDGE.md", "SESSION_LOG.md", "CLUSTERS.md", "COMPARISON.md",
-                     "SKILL_CANDIDATES.md", "ISSUES.md", "cycle-001.md", "cycle-001-CHECKS.md"):
+        for name in (
+            "KNOWLEDGE.md",
+            "SESSION_LOG.md",
+            "CLUSTERS.md",
+            "COMPARISON.md",
+            "SKILL_CANDIDATES.md",
+            "ISSUES.md",
+            "cycle-001.md",
+            "cycle-001-CHECKS.md",
+        ):
             self.assertIn(name, state["history"][0]["completion_gate"]["documents"])
             self.assertTrue((self.root / "reports" / name).is_file())
 
@@ -90,7 +100,9 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(audit["status"], "warning")
         self.assertTrue(any("設定引数" in x for x in audit["findings"]))
         self.assertTrue(any("encoding" in x for x in audit["findings"]))
-        clean = inspect_code({"experiment.py": "def compute(config):\n    return config['x']\ncompute({'x': 3})\nopen('x', 'wb')\n"})
+        clean = inspect_code(
+            {"experiment.py": "def compute(config):\n    return config['x']\ncompute({'x': 3})\nopen('x', 'wb')\n"}
+        )
         self.assertEqual(clean["findings"], [])
 
     def test_adapted_skills_are_distributed_and_loaded_into_tickets(self):

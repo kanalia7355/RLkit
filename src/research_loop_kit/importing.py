@@ -9,7 +9,22 @@ from .store import digest
 
 MAX_FILES = 200
 MAX_BYTES = 100 * 1024 * 1024
-EXCLUDED = {".git", ".rlk", ".research", ".agents", ".claude", ".gemini", ".opencode", "__pycache__", ".venv", "node_modules", ".ssh", ".aws", ".azure", ".kube"}
+EXCLUDED = {
+    ".git",
+    ".rlk",
+    ".research",
+    ".agents",
+    ".claude",
+    ".gemini",
+    ".opencode",
+    "__pycache__",
+    ".venv",
+    "node_modules",
+    ".ssh",
+    ".aws",
+    ".azure",
+    ".kube",
+}
 
 
 def preview(source, paths):
@@ -27,7 +42,11 @@ def preview(source, paths):
         relative = PurePosixPath(name)
         if relative.is_absolute() or any(p in ("..", ".", "") for p in name.split("/")):
             raise LoopError("資料のパス逸脱は許可されません")
-        if set(relative.parts) & EXCLUDED or any(p.lower().startswith('.env') for p in relative.parts) or relative.suffix.lower() in (".pem", ".key"):
+        if (
+            set(relative.parts) & EXCLUDED
+            or any(p.lower().startswith(".env") for p in relative.parts)
+            or relative.suffix.lower() in (".pem", ".key")
+        ):
             raise LoopError(f"状態DB・Agent設定・認証情報は資料として取り込みません: {name}")
         path = root / name
         no_links(path, root)
@@ -78,5 +97,9 @@ def copy_snapshot(destination, inspection, context):
         with target.open("xb") as stream:
             stream.write(data)
     write_new(destination / "imports/MANIFEST.json", dump(inspection) + "\n")
-    write_new(destination / "imports/CONTEXT.md", "# 既存研究の整理\n\n" + context["summary"] +
-              "\n\n取り込み資料は未再検証の過去資料です。新たな実測・採用済み計画・実行権限にはしません。\n")
+    write_new(
+        destination / "imports/CONTEXT.md",
+        "# 既存研究の整理\n\n"
+        + context["summary"]
+        + "\n\n取り込み資料は未再検証の過去資料です。新たな実測・採用済み計画・実行権限にはしません。\n",
+    )
