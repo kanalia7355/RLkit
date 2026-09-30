@@ -26,7 +26,7 @@
    ユーザーがこの具体的な方針で進める意図を示したら、表示されたハッシュで
    `rlk accept . --hash HASH`。同じ承認を繰り返し求めない。
    boundedの承認は固定設定内の後続サイクルにも及ぶ。外部公開の許可にはならない。
-7. implementの仕事票を処理する。実験コードが揃ったら
+7. implementの仕事票を処理し、続くimplementation_reviewの仕事票で計画・コードを照合したテストを提出する。合格するまで実験を起動しない。実験コードが揃ったら
    共通処理をsrcへ蓄積し、入口は条件設定・呼出しを中心にする。shared_sourcesを確認し、
    追加・更新はshared_filesとして提出する。共通srcを直接編集せず、登録・版固定はランタイムへ任せる。
    `rlk run . --experiments-only`。主処理・seed・対照・成果物を実際に確認する。
@@ -73,3 +73,25 @@ pause中にスキル改善の継続が選ばれたらskill-resumeでスキルだ
 
 `pause` は新規起動を止める。既に走るプロセスはタイムアウト内で終了する。
 Agentのセッションが終了するとactive方式の進行も止まる。再開可能だが常駐サービスではない。
+
+## 研究品質の追加手順
+
+入力データは初期設定のdata_filesへ研究内の相対パスで登録する。コード・テストは
+RLK_INPUT_DIR配下の固定コピーから読み、原本の絶対パスを埋め込まない。
+implementation_reviewは指標・対照・介入・データ分割・seedを具体的に確認し、
+独立に期待値を定めたunittestを返す。同じAgentの場合は独立査読と称しない。
+実行前レビューの専用予算max_validation_callsと研究の実時間上限を確認する。
+
+通常結果はexplorationであり、閾値到達だけを確立した知見としない。
+確認の具体的な依頼があれば、完了済み結果のハッシュを確認し、内部で
+confirm --cycle CYCLE --experiment ID --hash RESULT_HASH --seeds FRESH_SEEDSを使う。
+コード・比較条件・入力・環境を維持し、未使用seedを選ぶ。予算はリセットしない。
+新seedの確認を、未知データでの一般化や統計的有意差の証明と称しない。
+partialは完了済みのseedを報告し、停止理由・完了数/予定数を説明する。支持にしない。
+
+スキル有効化はbehavior_validatedであり、有用性は未評価。評価する場合は
+skill-evaluation-planで版・指標・方法・改善幅・正常と悪化検出の事例・入力を
+結果を見る前に固定する。全事例についてスキルなし・ありを比較し、実際の出力・
+入力・採点根拠・score・protocol_hashをJSON証跡へ残す。欠損を捏造しない。
+skill-assessで証跡を提出し、utility_supported / regression / inconclusiveを説明する。
+利用者には会話で計画・結果を説明し、JSON作成やコマンド入力を要求しない。

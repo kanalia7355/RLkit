@@ -146,6 +146,21 @@ def respond(job, state):
             "shared_files": {} if _has_shared_code(payload) else {"research/quadratic.py": SHARED_CODE},
             "notes": "標準ライブラリだけで計算する動作実証実装",
         }
+    if kind == "implementation_review":
+        return {
+            "decision": "approved",
+            "summary": "既知の二次関数を用いて計画の条件と境界値を検証する。",
+            "checks": {
+                key: {
+                    "status": "not_applicable" if key == "data_split" else "passed",
+                    "evidence": "experiment.pyの引数とresearch.quadratic.compareの8更新・初期値・二乗誤差を照合。合成データのみ。",
+                }
+                for key in ("metric", "baseline", "treatment", "data_split", "seed")
+            },
+            "tests": {
+                "test_contract.py": "import unittest\nfrom research.quadratic import compare\n\nclass ContractTests(unittest.TestCase):\n    def test_zero_updates(self):\n        b,t = compare(123, rate=0.1, steps=0)\n        self.assertEqual(b,t)\n    def test_one_update(self):\n        b,t = compare(123, rate=0.1, steps=1)\n        self.assertAlmostEqual(t, b * 0.64)\n    def test_reproducible(self):\n        self.assertEqual(compare(123, rate=0.1, steps=8), compare(123, rate=0.1, steps=8))\n"
+            },
+        }
     if kind == "review":
         return {
             "experiments": [

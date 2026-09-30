@@ -26,9 +26,11 @@ DEFAULTS = {
     "max_parallel_experiments": 1,
     "deep_questions": 4,
     "seeds": [11, 22, 33, 44, 55],
+    "data_files": [],
     "max_cycles": 1,
     "max_agent_calls": 40,
     "max_skill_calls": 20,
+    "max_validation_calls": 20,
     "max_runs": 30,
     "max_attempts": 2,
     "agent_timeout_seconds": 900,
@@ -107,7 +109,7 @@ def validate(config):
         raise LoopError("未対応の backend です")
     if not isinstance(config["model"], str):
         raise LoopError("model は文字列が必要です")
-    for key in ("agent_args", "custom_command"):
+    for key in ("agent_args", "custom_command", "data_files"):
         strings(config[key], key)
     if config["backend"] == "custom" and not config["custom_command"]:
         raise LoopError("custom_command が必要です")
@@ -116,7 +118,16 @@ def validate(config):
     if not isinstance(config["roles"], dict):
         raise LoopError("roles はオブジェクトが必要です")
     for role, override in config["roles"].items():
-        if role not in ("deepen", "ideas", "plan", "implement", "review", "skill_design", "skill_build"):
+        if role not in (
+            "deepen",
+            "ideas",
+            "plan",
+            "implement",
+            "implementation_review",
+            "review",
+            "skill_design",
+            "skill_build",
+        ):
             raise LoopError(f"不明な役割: {role}")
         if not isinstance(override, dict) or set(override) - {"backend", "model", "agent_args", "custom_command"}:
             raise LoopError(f"不正な役割設定: {role}")

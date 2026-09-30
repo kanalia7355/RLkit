@@ -78,7 +78,7 @@ class LoopTests(unittest.TestCase):
 
         def drain():
             while True:
-                job = engine.claim({"deepen", "ideas", "plan", "implement", "review"})
+                job = engine.claim({"deepen", "ideas", "plan", "implement", "implementation_review", "review"})
                 if not job:
                     break
                 ticket = engine.ticket(job)
@@ -230,12 +230,12 @@ class LoopTests(unittest.TestCase):
         engine.run()
         self.assertEqual(engine.status()["runs"], 1)
         failed = [j for j in engine.status()["jobs"] if j["status"] == "failed"]
-        self.assertEqual(len(failed), 2)
+        self.assertEqual(len(failed), 1)
         for job in failed:
             engine.skip_failed(job["id"])
         engine.run()
         self.assertEqual(engine.status()["phase"], "complete")
-        self.assertTrue(all(r["status"] == "failed" for r in engine.status()["history"][0]["results"]))
+        self.assertEqual({r["status"] for r in engine.status()["history"][0]["results"]}, {"failed", "partial"})
         with engine.store.transaction() as db:
             for job in failed:
                 self.assertEqual(
@@ -253,7 +253,7 @@ class LoopTests(unittest.TestCase):
 
     def test_implementation_traversal_rejected(self):
         engine = self.accepted()
-        job = engine.claim({"implement"})
+        job = engine.claim({"implement", "implementation_review"})
         response = respond(job, engine.status())
         response["files"]["../escape.py"] = "print(1)"
         with self.assertRaises(LoopError):
@@ -262,7 +262,7 @@ class LoopTests(unittest.TestCase):
 
     def test_invalid_metric_seed_is_not_success(self):
         engine = self.accepted()
-        job = engine.claim({"implement"})
+        job = engine.claim({"implement", "implementation_review"})
         response = respond(job, engine.status())
         response["files"]["experiment.py"] = response["files"]["experiment.py"].replace('"seed": a.seed', '"seed": 999')
         engine.submit(job["id"], job["token"], response)
@@ -279,7 +279,7 @@ class LoopTests(unittest.TestCase):
 
     def test_supported_review_requires_measured_threshold(self):
         engine = self.accepted()
-        while job := engine.claim({"implement"}):
+        while job := engine.claim({"implement", "implementation_review"}):
             engine.work(job)
         engine.run(experiments_only=True)
         review = engine.claim({"review"})

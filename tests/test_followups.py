@@ -67,7 +67,7 @@ class FollowupTests(unittest.TestCase):
 
     def until_review(self, engine):
         while True:
-            job = engine.claim({"implement"})
+            job = engine.claim({"implement", "implementation_review"})
             if not job:
                 break
             engine.submit(job["id"], job["token"], respond(job, engine.status()))

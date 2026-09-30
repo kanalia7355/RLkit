@@ -432,6 +432,8 @@ class Sessions:
                 "skill-reject",
                 "skill-revise",
                 "skill-disable",
+                "skill-assess",
+                "skill-evaluation-plan",
                 "skill-fail",
                 "skill-recover",
                 "skill-retry",

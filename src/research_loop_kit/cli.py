@@ -74,6 +74,20 @@ def parser():
     accept = sub.add_parser("accept")
     accept.add_argument("root")
     accept.add_argument("--hash", required=True)
+    confirm = sub.add_parser("confirm", help="未使用seedで固定条件の確認実験を開始")
+    confirm.add_argument("root")
+    confirm.add_argument("--cycle", type=int, required=True)
+    confirm.add_argument("--experiment", required=True)
+    confirm.add_argument("--hash", required=True)
+    confirm.add_argument("--seeds", nargs="+", type=int, required=True)
+    plan_assessment = sub.add_parser("skill-evaluation-plan", help="スキルの比較事例と指標を事前に固定")
+    plan_assessment.add_argument("root")
+    plan_assessment.add_argument("name")
+    plan_assessment.add_argument("--file", required=True)
+    assess = sub.add_parser("skill-assess", help="固定版スキルの有無による事例比較を記録")
+    assess.add_argument("root")
+    assess.add_argument("name")
+    assess.add_argument("--file", required=True)
     revise = sub.add_parser("revise")
     revise.add_argument("root")
     revise.add_argument("--feedback", required=True)
@@ -210,7 +224,9 @@ def main(argv=None):
             engine.propose()
         elif command in ("next", "skill-next"):
             job = engine.claim(
-                set(KINDS) if command == "skill-next" else {"deepen", "ideas", "plan", "implement", "review", *KINDS}
+                set(KINDS)
+                if command == "skill-next"
+                else {"deepen", "ideas", "plan", "implement", "implementation_review", "review", *KINDS}
             )
             output = (
                 engine.ticket(job)
@@ -247,6 +263,12 @@ def main(argv=None):
             engine.skip_failed(args.job)
         elif command == "accept":
             engine.accept(args.hash)
+        elif command == "confirm":
+            engine.confirm(args.cycle, args.experiment, args.hash, args.seeds)
+        elif command == "skill-evaluation-plan":
+            output = {"protocol_hash": engine.plan_skill_assessment(args.name, read_json(args.file))}
+        elif command == "skill-assess":
+            engine.assess_skill(args.name, read_json(args.file))
         elif command == "revise":
             engine.revise(args.feedback)
         elif command == "pause":
