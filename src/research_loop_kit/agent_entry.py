@@ -8,8 +8,8 @@ import sys
 
 from .cli import main as loop_main
 from .config import LoopError, dump, read_json
-from .sessions import Sessions
 from .importing import preview
+from .sessions import Sessions
 
 
 def hook(root, provider, payload):
@@ -17,15 +17,21 @@ def hook(root, provider, payload):
     if ".rlk" in cwd.parts and "jobs" in cwd.parts:
         return {}
     if payload.get("source") == "compact":
-        context = "会話の圧縮です。直前に選んだ研究とsession_idを維持し、進め方の選択を繰り返さず状態を再確認してください。"
+        context = (
+            "会話の圧縮です。直前に選んだ研究とsession_idを維持し、進め方の選択を繰り返さず状態を再確認してください。"
+        )
         return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
     menu = Sessions(root).menu()
-    context = ("新しく起動・再開された対話セッションです。RESEARCH_START.mdを読み、入口を新規に開いてください。"
-               "以前のsession_idをこの起動の選択済みIDとして流用しないでください。"
-               "ただし具体的なJobとtokenを指定された実働Agentは、その作業票を優先し研究の質問を開始しないでください。\n"
-               + dump(menu))
-    return {"systemMessage": menu["opening"],
-            "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
+    context = (
+        "新しく起動・再開された対話セッションです。RESEARCH_START.mdを読み、入口を新規に開いてください。"
+        "以前のsession_idをこの起動の選択済みIDとして流用しないでください。"
+        "ただし具体的なJobとtokenを指定された実働Agentは、その作業票を優先し研究の質問を開始しないでください。\n"
+        + dump(menu)
+    )
+    return {
+        "systemMessage": menu["opening"],
+        "hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context},
+    }
 
 
 def main(root, argv=None):
@@ -67,8 +73,15 @@ def main(root, argv=None):
         if args.action == "import-preview":
             result = preview(args.source, args.files)
         elif args.action == "import-study":
-            result = hub.import_study(args.session, args.source, args.files, args.hash, args.name,
-                                      read_json(args.context), read_json(args.settings) if args.settings else None)
+            result = hub.import_study(
+                args.session,
+                args.source,
+                args.files,
+                args.hash,
+                args.name,
+                read_json(args.context),
+                read_json(args.settings) if args.settings else None,
+            )
         elif args.action == "hook":
             payload = json.load(sys.stdin)
             if not isinstance(payload, dict):
@@ -77,14 +90,49 @@ def main(root, argv=None):
         elif args.action == "open":
             result = hub.open()
         elif args.action == "select":
-            result = hub.select(args.session, args.choice, project_id=args.project, name=args.name,
-                                settings=read_json(args.settings) if args.settings else None,
-                                feedback=args.feedback, candidate_ids=args.candidates, plan_job=args.plan_job)
+            result = hub.select(
+                args.session,
+                args.choice,
+                project_id=args.project,
+                name=args.name,
+                settings=read_json(args.settings) if args.settings else None,
+                feedback=args.feedback,
+                candidate_ids=args.candidates,
+                plan_job=args.plan_job,
+            )
         else:
-            allowed = {"status", "questions", "answer", "configure", "deepen", "propose", "next", "submit", "fail",
-                       "recover", "retry", "skip-failed", "accept", "revise", "pause", "resume", "run", "export", "doctor",
-                       "skill-next", "skill-submit", "skill-run", "skill-accept", "skill-reject", "skill-revise", "skill-disable",
-                       "skill-fail", "skill-recover", "skill-retry", "skill-resume"}
+            allowed = {
+                "status",
+                "questions",
+                "answer",
+                "configure",
+                "deepen",
+                "propose",
+                "next",
+                "submit",
+                "fail",
+                "recover",
+                "retry",
+                "skip-failed",
+                "accept",
+                "revise",
+                "pause",
+                "resume",
+                "run",
+                "export",
+                "doctor",
+                "skill-next",
+                "skill-submit",
+                "skill-run",
+                "skill-accept",
+                "skill-reject",
+                "skill-revise",
+                "skill-disable",
+                "skill-fail",
+                "skill-recover",
+                "skill-retry",
+                "skill-resume",
+            }
             if args.command not in allowed:
                 raise LoopError("この入口では指定された内部操作を使えません")
             path = hub.target(args.session, args.command)

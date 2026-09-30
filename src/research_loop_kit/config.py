@@ -28,6 +28,7 @@ DEFAULTS = {
     "seeds": [11, 22, 33, 44, 55],
     "max_cycles": 1,
     "max_agent_calls": 40,
+    "max_skill_calls": 20,
     "max_runs": 30,
     "max_attempts": 2,
     "agent_timeout_seconds": 900,
@@ -52,8 +53,10 @@ QUESTIONS = {
 
 def read_json(path):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8-sig"),
-                          parse_constant=lambda x: (_ for _ in ()).throw(LoopError(f"非有限値: {x}")))
+        return json.loads(
+            Path(path).read_text(encoding="utf-8-sig"),
+            parse_constant=lambda x: (_ for _ in ()).throw(LoopError(f"非有限値: {x}")),
+        )
     except (OSError, json.JSONDecodeError) as exc:
         raise LoopError(f"JSONを読めません: {path}: {exc}") from exc
 
@@ -79,9 +82,20 @@ def strings(value, label):
         raise LoopError(f"{label} は文字列の配列が必要です")
 
 
+def upgrade(config):
+    """旧版で保存した設定へ、後から追加された項目の既定値を補う（未知の項目は残し検証で拒否）。"""
+    if not isinstance(config, dict):
+        raise LoopError("設定はJSONオブジェクトが必要です")
+    return dict(copy.deepcopy(DEFAULTS), **config)
+
+
 def validate(config):
-    if set(config) != set(DEFAULTS):
-        raise LoopError(f"設定キーが一致しません: {set(config) ^ set(DEFAULTS)}")
+    unknown = set(config) - set(DEFAULTS)
+    if unknown:
+        raise LoopError(f"不明な設定キー: {sorted(unknown)}")
+    missing = set(DEFAULTS) - set(config)
+    if missing:
+        raise LoopError(f"設定キーが不足しています: {sorted(missing)}")
     nonempty(config["name"], "name")
     if config["schema_version"] != 1 or type(config["schema_version"]) is not int:
         raise LoopError("未対応の設定バージョンです")
@@ -122,6 +136,4 @@ def validate(config):
 
 
 def make_config(overrides=None):
-    config = copy.deepcopy(DEFAULTS)
-    config.update(overrides or {})
-    return validate(config)
+    return validate(upgrade(overrides or {}))

@@ -11,8 +11,8 @@ from research_loop_kit.config import LoopError
 from research_loop_kit.demo import ANSWERS, respond
 from research_loop_kit.engine import Engine
 from research_loop_kit.guards import verify_evidence
-from research_loop_kit.setup import initialize
 from research_loop_kit.sessions import Sessions
+from research_loop_kit.setup import initialize
 
 
 class SharedSourceTests(unittest.TestCase):
@@ -20,8 +20,10 @@ class SharedSourceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "研究"
-        initialize(self.root, {"backend": "demo", "seeds": [1], "experiments_per_cycle": 2,
-                               "max_cycles": 2, "autonomy": "bounded"})
+        initialize(
+            self.root,
+            {"backend": "demo", "seeds": [1], "experiments_per_cycle": 2, "max_cycles": 2, "autonomy": "bounded"},
+        )
         self.engine = Engine(self.root)
         e = self.engine
         e.answer(ANSWERS)
@@ -49,7 +51,9 @@ class SharedSourceTests(unittest.TestCase):
         job = self.engine.claim({"implement"})
         response = respond(job, self.engine.status())
         self.engine.submit(job["id"], job["token"], response)
-        (self.root / "src/research/quadratic.py").write_text("raise RuntimeError('latest must not execute')\n", encoding="utf-8")
+        (self.root / "src/research/quadratic.py").write_text(
+            "raise RuntimeError('latest must not execute')\n", encoding="utf-8"
+        )
         execute = self.engine.claim({"execute"})
         result = self.engine.work(execute)
         self.assertEqual(result["status"], "done")
@@ -67,7 +71,10 @@ class SharedSourceTests(unittest.TestCase):
         self.engine.submit(first["id"], first["token"], a)
         with self.assertRaisesRegex(LoopError, "競合"):
             self.engine.submit(second["id"], second["token"], b)
-        self.assertEqual((self.root / "src/research/quadratic.py").read_text(encoding="utf-8"), a["shared_files"]["research/quadratic.py"])
+        self.assertEqual(
+            (self.root / "src/research/quadratic.py").read_text(encoding="utf-8"),
+            a["shared_files"]["research/quadratic.py"],
+        )
 
     def test_path_escape_and_invalid_shared_python_rejected(self):
         job = self.engine.claim({"implement"})

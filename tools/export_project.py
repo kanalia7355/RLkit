@@ -7,19 +7,40 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-FILES = ("pyproject.toml", "README.md", ".gitignore", "setup.ps1", "setup.sh", "agent.py",
-         "AGENTS.md", "CLAUDE.md", "GEMINI.md", "RESEARCH_START.md", ".claude/settings.json", ".gemini/settings.json")
-TREES = {"src": {".py", ".md"}, "tests": {".py"}, "docs": {".md"},
-         "examples": {".json"}, "tools": {".py"}, ".github": {".yml", ".yaml", ".md"},
-         ".agents/skills": {".md"}}
+FILES = (
+    "pyproject.toml",
+    "README.md",
+    ".gitignore",
+    "setup.ps1",
+    "setup.sh",
+    "agent.py",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "RESEARCH_START.md",
+    ".claude/settings.json",
+    ".gemini/settings.json",
+)
+TREES = {
+    "src": {".py", ".md"},
+    "tests": {".py"},
+    "docs": {".md"},
+    "examples": {".json"},
+    "tools": {".py"},
+    ".github": {".yml", ".yaml", ".md"},
+    ".agents/skills": {".md"},
+}
 
 
 def export(destination):
     destination = Path(destination).resolve()
     selected = [ROOT / name for name in FILES]
     for folder, suffixes in TREES.items():
-        selected.extend(p for p in (ROOT / folder).rglob("*")
-                        if p.is_file() and p.suffix in suffixes and "__pycache__" not in p.parts)
+        selected.extend(
+            p
+            for p in (ROOT / folder).rglob("*")
+            if p.is_file() and p.suffix in suffixes and "__pycache__" not in p.parts
+        )
     for optional in ("LICENSE", "LICENSE.md"):
         if (ROOT / optional).is_file():
             selected.append(ROOT / optional)
@@ -38,8 +59,16 @@ def export(destination):
         for name, content in contents:
             archive.writestr(name, content)
         archive.writestr("EXPORT_MANIFEST.json", json.dumps(manifest, indent=2, ensure_ascii=False))
-    print(json.dumps({"archive": str(destination), "files": len(manifest),
-                      "sha256": hashlib.sha256(destination.read_bytes()).hexdigest()}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "archive": str(destination),
+                "files": len(manifest),
+                "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -7,25 +7,22 @@ from pathlib import Path
 import sqlite3
 import time
 
-from .config import LoopError, dump
+from .config import LoopError, dump, upgrade
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
-                                     allow_nan=False).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
-def write_new(path, text):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8", newline="\n") as stream:
-        stream.write(text)
+# DBに別行で持ち、stateの本文へは保存しない派生項目。
+DERIVED_KEYS = ("history", "jobs", "failed_attempts")
 
 
 class Store:
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.path = self.root / ".rlk" / "state.sqlite3"
+        self._migrated = False
 
     @contextmanager
     def transaction(self):
@@ -36,13 +33,32 @@ class Store:
         try:
             db.execute("PRAGMA synchronous=FULL")
             db.execute("BEGIN IMMEDIATE")
+            if not self._migrated:
+                self._migrate(db)
             yield db
             db.commit()
+            self._migrated = True
         except BaseException:
             db.rollback()
             raise
         finally:
             db.close()
+
+    @staticmethod
+    def _migrate(db):
+        """旧版のDB（historyをstate本文に保持）を、サイクル別の行へ移す。"""
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='state'").fetchone():
+            return  # initialize中
+        db.execute("CREATE TABLE IF NOT EXISTS history (cycle INTEGER PRIMARY KEY, body TEXT NOT NULL)")
+        row = db.execute("SELECT body FROM state WHERE id=1").fetchone()
+        if row is None:
+            return
+        body = json.loads(row[0])
+        if "history" not in body:
+            return
+        for entry in body.pop("history"):
+            db.execute("INSERT OR REPLACE INTO history VALUES (?,?)", (entry["cycle"], dump(entry)))
+        db.execute("UPDATE state SET body=? WHERE id=1", (dump(body),))
 
     def initialize(self, state):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,16 +74,28 @@ class Store:
                 CREATE TABLE events (id INTEGER PRIMARY KEY, time REAL, kind TEXT, body TEXT);
                 CREATE TABLE attempts (job INTEGER, attempt INTEGER, token TEXT, status TEXT,
                     body TEXT, PRIMARY KEY(job, attempt));
+                CREATE TABLE IF NOT EXISTS history (cycle INTEGER PRIMARY KEY, body TEXT NOT NULL);
             """)
-            db.execute("INSERT INTO state VALUES (1, ?)", (dump(state),))
+            db.execute("INSERT INTO state VALUES (1, ?)", (dump(strip_derived(state)),))
 
     @staticmethod
     def state(db):
-        return json.loads(db.execute("SELECT body FROM state WHERE id=1").fetchone()[0])
+        """state本文。履歴は含まない（必要なら history(db) を使う）。"""
+        state = json.loads(db.execute("SELECT body FROM state WHERE id=1").fetchone()[0])
+        state["config"] = upgrade(state["config"])
+        return state
 
     @staticmethod
     def save(db, state):
-        db.execute("UPDATE state SET body=? WHERE id=1", (dump(state),))
+        db.execute("UPDATE state SET body=? WHERE id=1", (dump(strip_derived(state)),))
+
+    @staticmethod
+    def history(db):
+        return [json.loads(body) for (body,) in db.execute("SELECT body FROM history ORDER BY cycle")]
+
+    @staticmethod
+    def add_history(db, entry):
+        db.execute("INSERT INTO history VALUES (?,?)", (entry["cycle"], dump(entry)))
 
     @staticmethod
     def event(db, kind, body):
@@ -75,14 +103,26 @@ class Store:
 
     @staticmethod
     def job(db, cycle, kind, payload):
-        return db.execute("INSERT INTO jobs(cycle,kind,payload) VALUES (?,?,?)",
-                          (cycle, kind, dump(payload))).lastrowid
+        return db.execute("INSERT INTO jobs(cycle,kind,payload) VALUES (?,?,?)", (cycle, kind, dump(payload))).lastrowid
 
     @staticmethod
-    def jobs(db, cycle=None):
-        if cycle is None:
-            rows = db.execute("SELECT * FROM jobs ORDER BY id")
-        else:
-            rows = db.execute("SELECT * FROM jobs WHERE cycle=? ORDER BY id", (cycle,))
-        return [dict(row, payload=json.loads(row["payload"]),
-                     result=json.loads(row["result"]) if row["result"] else None) for row in rows]
+    def jobs(db, cycle=None, statuses=None):
+        query, args = "SELECT * FROM jobs", []
+        conditions = []
+        if cycle is not None:
+            conditions.append("cycle=?")
+            args.append(cycle)
+        if statuses:
+            conditions.append(f"status IN ({','.join('?' * len(statuses))})")
+            args += list(statuses)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        rows = db.execute(query + " ORDER BY id", args)
+        return [
+            dict(row, payload=json.loads(row["payload"]), result=json.loads(row["result"]) if row["result"] else None)
+            for row in rows
+        ]
+
+
+def strip_derived(state):
+    return {key: value for key, value in state.items() if key not in DERIVED_KEYS}

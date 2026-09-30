@@ -1,15 +1,13 @@
 """日本語の対話と、Agentから呼べるJSONインタフェース。"""
 
 import argparse
-import json
-from pathlib import Path
 import shutil
 import sys
 
 from .config import BACKENDS, LoopError, dump, read_json
 from .engine import Engine
-from .setup import initialize
 from .evolution import KINDS
+from .setup import initialize
 
 
 def parser():
@@ -21,7 +19,20 @@ def parser():
     init.add_argument("--backend", choices=BACKENDS)
     init.add_argument("--name")
     init.add_argument("--wizard", action="store_true")
-    for name in ("interview", "questions", "deepen", "propose", "status", "pause", "resume", "export", "doctor", "skill-next", "skill-run", "skill-resume"):
+    for name in (
+        "interview",
+        "questions",
+        "deepen",
+        "propose",
+        "status",
+        "pause",
+        "resume",
+        "export",
+        "doctor",
+        "skill-next",
+        "skill-run",
+        "skill-resume",
+    ):
         sub.add_parser(name).add_argument("root")
     for name in ("answer", "configure"):
         cmd = sub.add_parser(name)
@@ -92,7 +103,9 @@ def wizard(root, overrides):
     if not sys.stdin.isatty():
         raise LoopError("wizardには対話端末が必要です。init --configまたは起動中のAgentを使ってください")
     overrides.setdefault("name", input("研究プロジェクト名 [新しい研究]: ").strip() or "新しい研究")
-    overrides.setdefault("backend", input("Agent [active / codex / claude / gemini / opencode / custom] (active): ").strip() or "active")
+    overrides.setdefault(
+        "backend", input("Agent [active / codex / claude / gemini / opencode / custom] (active): ").strip() or "active"
+    )
     for key, label, default in [
         ("candidate_count", "各サイクルで出す実験候補数", 6),
         ("proposal_workers", "候補を考えるワーカー数", 3),
@@ -111,7 +124,9 @@ def wizard(root, overrides):
     text = input("seedをカンマ区切りで [11,22,33,44,55]: ").strip()
     if text:
         overrides["seeds"] = [int(x.strip()) for x in text.split(",")]
-    overrides["autonomy"] = input("方針の確認 [review_each_cycle / bounded] (review_each_cycle): ").strip() or "review_each_cycle"
+    overrides["autonomy"] = (
+        input("方針の確認 [review_each_cycle / bounded] (review_each_cycle): ").strip() or "review_each_cycle"
+    )
     initialize(root, overrides)
     interview(Engine(root))
 
@@ -136,21 +151,42 @@ def main(argv=None):
             return 0
         if command == "demo":
             from .demo import ANSWERS
-            initialize(args.root, {"name": "二次関数による動作実証", "backend": "demo", "max_cycles": args.cycles,
-                                   "autonomy": "bounded", "max_parallel_experiments": 2,
-                                   "max_agent_calls": 100 * args.cycles, "max_runs": 10 * args.cycles})
+
+            initialize(
+                args.root,
+                {
+                    "name": "二次関数による動作実証",
+                    "backend": "demo",
+                    "max_cycles": args.cycles,
+                    "autonomy": "bounded",
+                    "max_parallel_experiments": 2,
+                    "max_agent_calls": 100 * args.cycles,
+                    "max_runs": 10 * args.cycles,
+                },
+            )
             engine = Engine(args.root)
             engine.answer(ANSWERS)
             engine.deepen()
             engine.run()
-            engine.answer({key: "8更新、同じ初期点、合成データ、実研究の主張には使わない" for key in engine.questions()})
+            engine.answer(
+                {key: "8更新、同じ初期点、合成データ、実研究の主張には使わない" for key in engine.questions()}
+            )
             engine.propose()
             engine.run()
             engine.accept(engine.status()["proposal_hash"])
             engine.run()
             state = engine.status()
-            print(dump({"phase": state["phase"], "cycles": len(state["history"]), "runs": state["runs"],
-                        "agent_calls": state["agent_calls"], "reports": engine.export()}))
+            print(
+                dump(
+                    {
+                        "phase": state["phase"],
+                        "cycles": len(state["history"]),
+                        "runs": state["runs"],
+                        "agent_calls": state["agent_calls"],
+                        "reports": engine.export(),
+                    }
+                )
+            )
             return 0 if state["phase"] == "complete" else 2
         engine = Engine(args.root)
         output = None
@@ -173,10 +209,21 @@ def main(argv=None):
         elif command == "propose":
             engine.propose()
         elif command in ("next", "skill-next"):
-            job = engine.claim(set(KINDS) if command == "skill-next" else {"deepen", "ideas", "plan", "implement", "review", *KINDS})
-            output = engine.ticket(job) if job else {"phase": engine.status()["phase"], "message": "取得できるAI作業はありません。statusで実行中・失敗・実験待ちを確認してください"}
+            job = engine.claim(
+                set(KINDS) if command == "skill-next" else {"deepen", "ideas", "plan", "implement", "review", *KINDS}
+            )
+            output = (
+                engine.ticket(job)
+                if job
+                else {
+                    "phase": engine.status()["phase"],
+                    "message": "取得できるAI作業はありません。statusで実行中・失敗・実験待ちを確認してください",
+                }
+            )
         elif command in ("submit", "skill-submit"):
-            if command == "skill-submit" and not any(j["id"] == args.job and j["kind"] in KINDS for j in engine.status()["jobs"]):
+            if command == "skill-submit" and not any(
+                j["id"] == args.job and j["kind"] in KINDS for j in engine.status()["jobs"]
+            ):
                 raise LoopError("スキル作業のIDを指定してください")
             engine.submit(args.job, args.token, read_json(args.file))
             engine.export()
@@ -212,7 +259,9 @@ def main(argv=None):
                 for job in state["jobs"]:
                     cfg = dict(state["config"], **state["config"]["roles"].get(job["kind"], {}))
                     if job["status"] == "pending" and job["kind"] != "execute" and cfg["backend"] == "active":
-                        raise LoopError("現在のAgentではrlk next → 作業票を処理 → rlk submitを使います。実験はrun --experiments-only")
+                        raise LoopError(
+                            "現在のAgentではrlk next → 作業票を処理 → rlk submitを使います。実験はrun --experiments-only"
+                        )
             output = engine.run(args.experiments_only)
             if any(j["status"] == "failed" for j in engine.status()["jobs"]):
                 print(dump(output))
@@ -221,12 +270,18 @@ def main(argv=None):
             output = {"reports": engine.export()}
         elif command == "doctor":
             state = engine.status()
-            output = {"python": sys.version, "backend": state["config"]["backend"],
-                      "cli_paths": {name: shutil.which(name) for name in ("codex", "claude", "gemini", "opencode")},
-                      "phase": state["phase"],
-                      "unfinished": [{"id": j["id"], "kind": j["kind"], "status": j["status"], "token": j["token"],
-                                      "error": j["error"]} for j in state["jobs"] if j["status"] in ("running", "failed")],
-                      "note": "存在確認のみ。認証・ツール権限・研究の妥当性は確認しません"}
+            output = {
+                "python": sys.version,
+                "backend": state["config"]["backend"],
+                "cli_paths": {name: shutil.which(name) for name in ("codex", "claude", "gemini", "opencode")},
+                "phase": state["phase"],
+                "unfinished": [
+                    {"id": j["id"], "kind": j["kind"], "status": j["status"], "token": j["token"], "error": j["error"]}
+                    for j in state["jobs"]
+                    if j["status"] in ("running", "failed")
+                ],
+                "note": "存在確認のみ。認証・ツール権限・研究の妥当性は確認しません",
+            }
         if output is not None:
             print(dump(output))
         return 0

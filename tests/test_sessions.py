@@ -1,7 +1,5 @@
 """cloneの自動入口から、再セッションと研究分岐までを検証する。"""
 
-import contextlib
-import io
 import json
 from pathlib import Path
 import shutil
@@ -104,8 +102,13 @@ class SessionTests(unittest.TestCase):
         choice, engine = self.planned()
         before = digest(engine.status())
         menu = self.hub.open()
-        branch = self.hub.select(menu["session_id"], "branch", project_id=choice["project_id"], name="設定比較",
-                                 settings={"max_parallel_experiments": 2, "seeds": [101, 102]})
+        branch = self.hub.select(
+            menu["session_id"],
+            "branch",
+            project_id=choice["project_id"],
+            name="設定比較",
+            settings={"max_parallel_experiments": 2, "seeds": [101, 102]},
+        )
         new = Engine(self.root / branch["path"])
         state = new.status()
         self.assertEqual(state["phase"], "interview")
@@ -122,8 +125,13 @@ class SessionTests(unittest.TestCase):
         choice, engine = self.planned()
         before = digest(engine.status())
         menu = self.hub.open()
-        branch = self.hub.select(menu["session_id"], "reselect", project_id=choice["project_id"],
-                                 name="選び直した実験", candidate_ids=["c3", "c5"])
+        branch = self.hub.select(
+            menu["session_id"],
+            "reselect",
+            project_id=choice["project_id"],
+            name="選び直した実験",
+            candidate_ids=["c3", "c5"],
+        )
         new = Engine(self.root / branch["path"])
         new.run()
         proposal = new.status()["proposal"]
@@ -146,8 +154,14 @@ class SessionTests(unittest.TestCase):
         engine.submit(job["id"], job["token"], revised)
         menu = self.hub.open()
         self.assertEqual(len(menu["projects"][0]["plan_versions"]), 2)
-        branch = self.hub.select(menu["session_id"], "revise", project_id=choice["project_id"], name="初版から分岐",
-                                 plan_job=first_job, feedback="初版の比較を変える")
+        branch = self.hub.select(
+            menu["session_id"],
+            "revise",
+            project_id=choice["project_id"],
+            name="初版から分岐",
+            plan_job=first_job,
+            feedback="初版の比較を変える",
+        )
         new = Engine(self.root / branch["path"])
         job = new.status()["jobs"][0]
         self.assertEqual(job["payload"]["previous_proposal"], first)
@@ -167,7 +181,9 @@ class SessionTests(unittest.TestCase):
         choice, engine = self.planned()
         menu = self.hub.open()
         with self.assertRaises(LoopError):
-            self.hub.select(menu["session_id"], "reselect", project_id=choice["project_id"], name="無効", candidate_ids=["c999"])
+            self.hub.select(
+                menu["session_id"], "reselect", project_id=choice["project_id"], name="無効", candidate_ids=["c999"]
+            )
         self.assertEqual(len(self.hub.catalog()), 1)
 
     def test_hook_is_readonly_and_compaction_keeps_selection(self):
@@ -185,12 +201,18 @@ class SessionTests(unittest.TestCase):
         clone.mkdir()
         shutil.copy(ROOT / "agent.py", clone)
         shutil.copytree(ROOT / "src", clone / "src", ignore=shutil.ignore_patterns("__pycache__", "*.egg-info"))
+
         def call(*args, payload=None):
-            proc = subprocess.run([sys.executable, str(clone / "agent.py"), *args],
-                                  cwd=self.root, input=json.dumps(payload) if payload else None,
-                                  capture_output=True, encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(clone / "agent.py"), *args],
+                cwd=self.root,
+                input=json.dumps(payload) if payload else None,
+                capture_output=True,
+                encoding="utf-8",
+            )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             return json.loads(proc.stdout)
+
         initial = call("hook", "--provider", "gemini", payload={"source": "startup"})
         self.assertEqual(initial["hookSpecificOutput"]["hookEventName"], "SessionStart")
         menu = call("open")

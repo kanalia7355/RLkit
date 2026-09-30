@@ -33,35 +33,66 @@ def verify(archive_path, wheel_path):
                 path.write_bytes(data)
         env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONNOUSERSITE="1")
         env.pop("PYTHONPATH", None)
-        for entry in ("AGENTS.md", "CLAUDE.md", "GEMINI.md", "RESEARCH_START.md", ".claude/settings.json", ".gemini/settings.json"):
+        for entry in (
+            "AGENTS.md",
+            "CLAUDE.md",
+            "GEMINI.md",
+            "RESEARCH_START.md",
+            ".claude/settings.json",
+            ".gemini/settings.json",
+        ):
             if not (source / entry).is_file():
                 raise ValueError(f"clone後の入口が配布物にありません: {entry}")
-        startup = subprocess.run([sys.executable, str(source / "agent.py"), "open"], cwd=root,
-                                 env=env, capture_output=True, encoding="utf-8", check=True)
+        startup = subprocess.run(
+            [sys.executable, str(source / "agent.py"), "open"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            encoding="utf-8",
+            check=True,
+        )
         if json.loads(startup.stdout)["kind"] != "setup":
             raise ValueError("未インストールのcloneで初回セットアップに進めません")
-        subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
-                       cwd=source, env=env, check=True)
+        subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=source, env=env, check=True
+        )
         site = root / "installed"
-        subprocess.run([sys.executable, "-m", "pip", "install", "--no-index", "--no-deps",
-                        "--target", str(site), str(wheel_path)], cwd=root, env=env, check=True)
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps", "--target", str(site), str(wheel_path)],
+            cwd=root,
+            env=env,
+            check=True,
+        )
         # wheelとソースの実行コード・スキルが同じであることを確認する。
         for source_file in (source / "src" / "research_loop_kit").rglob("*"):
             if source_file.is_file() and source_file.suffix in (".py", ".md"):
-                installed_file = site / "research_loop_kit" / source_file.relative_to(source / "src" / "research_loop_kit")
+                installed_file = (
+                    site / "research_loop_kit" / source_file.relative_to(source / "src" / "research_loop_kit")
+                )
                 if installed_file.read_bytes() != source_file.read_bytes():
                     raise ValueError(f"wheelが古い、または同梱漏れです: {source_file.name}")
         env["PYTHONPATH"] = str(site)
-        subprocess.run([sys.executable, "-m", "research_loop_kit", "demo", str(root / "demo"), "--cycles", "2"],
-                       cwd=root, env=env, check=True)
-        subprocess.run([sys.executable, "-m", "research_loop_kit", "init", str(root / "real-project")],
-                       cwd=root, env=env, check=True)
+        subprocess.run(
+            [sys.executable, "-m", "research_loop_kit", "demo", str(root / "demo"), "--cycles", "2"],
+            cwd=root,
+            env=env,
+            check=True,
+        )
+        subprocess.run(
+            [sys.executable, "-m", "research_loop_kit", "init", str(root / "real-project")],
+            cwd=root,
+            env=env,
+            check=True,
+        )
         state = json.loads((root / "demo/reports/status.json").read_text(encoding="utf-8"))
         if state["phase"] != "complete" or state["runs"] != 20:
             raise ValueError("独立環境でデモが完了していません")
         if not (root / "demo/reports/MEETING_REPORT-002.md").is_file():
             raise ValueError("報告会用Markdownがありません")
-        if not (root / "demo/src/research/quadratic.py").is_file() or not (root / "demo/experiments/cycle-002/e1/experiment.py").is_file():
+        if (
+            not (root / "demo/src/research/quadratic.py").is_file()
+            or not (root / "demo/experiments/cycle-002/e1/experiment.py").is_file()
+        ):
             raise ValueError("共通srcまたは実験の入口がありません")
         if len({r["manifest"]["shared_source_hash"] for h in state["history"] for r in h["results"]}) != 1:
             raise ValueError("デモの共通処理が実験間で再利用されていません")
@@ -71,18 +102,43 @@ def verify(archive_path, wheel_path):
         if candidate["status"] != "approval" or state.get("active_skills"):
             raise ValueError("スキルが設計承認前に反映されています")
         # ここだけはデモ候補の承認を模擬する。実研究の設計を承認しない。
-        subprocess.run([sys.executable, "-m", "research_loop_kit", "skill-accept", str(root / "demo"),
-                        candidate["id"], "--hash", candidate["design_hash"]], cwd=root, env=env, check=True)
-        subprocess.run([sys.executable, "-m", "research_loop_kit", "skill-run", str(root / "demo")],
-                       cwd=root, env=env, check=True)
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "research_loop_kit",
+                "skill-accept",
+                str(root / "demo"),
+                candidate["id"],
+                "--hash",
+                candidate["design_hash"],
+            ],
+            cwd=root,
+            env=env,
+            check=True,
+        )
+        subprocess.run(
+            [sys.executable, "-m", "research_loop_kit", "skill-run", str(root / "demo")], cwd=root, env=env, check=True
+        )
         evolved = json.loads((root / "demo/reports/status.json").read_text(encoding="utf-8"))
         if not evolved.get("active_skills") or evolved["runs"] != 20:
             raise ValueError("承認後のスキル育成または実験の分離に失敗しました")
-        print(json.dumps({"archive_files": len(manifest), "external_install": "PASS",
-                          "clone_entry_without_install": "PASS",
-                          "cycles": len(state["history"]), "runs": state["runs"],
-                          "new_project_init": "PASS", "meeting_report": "PASS",
-                          "approved_skill_evolution": "PASS", "shared_source_reuse": "PASS"}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "archive_files": len(manifest),
+                    "external_install": "PASS",
+                    "clone_entry_without_install": "PASS",
+                    "cycles": len(state["history"]),
+                    "runs": state["runs"],
+                    "new_project_init": "PASS",
+                    "meeting_report": "PASS",
+                    "approved_skill_evolution": "PASS",
+                    "shared_source_reuse": "PASS",
+                },
+                ensure_ascii=False,
+            )
+        )
 
 
 if __name__ == "__main__":

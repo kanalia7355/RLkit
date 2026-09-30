@@ -7,8 +7,9 @@ import re
 import sys
 
 from .config import LoopError, dump, nonempty, strings
+from .fsutil import write_new
 from .providers import process_run
-from .store import digest, write_new
+from .store import digest
 
 KINDS = ("skill_design", "skill_build")
 PHASES = ("deepen", "ideas", "plan", "implement", "review")
@@ -24,9 +25,14 @@ def detect(state, store, db, entry):
         key = digest(lesson)
         if any(c["key"] == key for c in candidates):
             continue
-        candidate = {"id": f"s{len(candidates)+1}", "key": key, "observation": lesson,
-                     "evidence": f"reports/cycle-{entry['cycle']:03d}.md", "cycle": entry["cycle"],
-                     "status": "designing"}
+        candidate = {
+            "id": f"s{len(candidates) + 1}",
+            "key": key,
+            "observation": lesson,
+            "evidence": f"reports/cycle-{entry['cycle']:03d}.md",
+            "cycle": entry["cycle"],
+            "status": "designing",
+        }
         candidates.append(candidate)
         store.job(db, 0, "skill_design", {"candidate": candidate})
         break
@@ -45,8 +51,19 @@ def safe_path(path):
 
 
 def validate_design(result):
-    for key in ("name", "description", "purpose", "trigger", "non_goals", "inputs", "outputs", "procedure",
-                "risks", "validation", "rollback"):
+    for key in (
+        "name",
+        "description",
+        "purpose",
+        "trigger",
+        "non_goals",
+        "inputs",
+        "outputs",
+        "procedure",
+        "risks",
+        "validation",
+        "rollback",
+    ):
         nonempty(result.get(key), key)
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", result["name"]):
         raise LoopError("スキル名は小文字英数字とハイフン、63文字以下です")
@@ -117,37 +134,58 @@ def build(root, job, result, timeout):
     directory = root / relative
     for name, text in result["files"].items():
         write_new(directory / name, text)
-    process_run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
-                directory, directory / "test.stdout.log", directory / "test.stderr.log", min(timeout, 60))
+    process_run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+        directory,
+        directory / "test.stdout.log",
+        directory / "test.stderr.log",
+        min(timeout, 60),
+    )
     log = (directory / "test.stderr.log").read_text(encoding="utf-8")
     match = re.search(r"Ran ([1-9][0-9]*) tests?", log)
     if not match or "\nOK" not in log or "skipped=" in log:
         raise LoopError("少なくとも1件の未skipテスト成功が必要です")
     # テストが資源を書き換えた版を承認済みの実装として採用しない。
-    if any((directory / name).is_symlink() or not (directory / name).resolve().is_relative_to(directory.resolve())
-           or (directory / name).read_text(encoding="utf-8") != text for name, text in result["files"].items()):
+    if any(
+        (directory / name).is_symlink()
+        or not (directory / name).resolve().is_relative_to(directory.resolve())
+        or (directory / name).read_text(encoding="utf-8") != text
+        for name, text in result["files"].items()
+    ):
         raise LoopError("検証中にスキル資源が変更されました")
-    return {"name": design["name"], "path": relative, "version": version,
-            "files": list(result["files"]), "phases": design["phases"],
-            "tests_passed": int(match[1]), "design_hash": job["payload"]["design_hash"]}
+    return {
+        "name": design["name"],
+        "path": relative,
+        "version": version,
+        "files": list(result["files"]),
+        "phases": design["phases"],
+        "tests_passed": int(match[1]),
+        "design_hash": job["payload"]["design_hash"],
+    }
 
 
 def documents(state):
     output = {}
     index = ["# スキル設計・反映状況", "", "設計承認は研究方針の採用とは別です。未承認版は反映しません。", ""]
     for candidate in state.get("skill_candidates", []):
-        index += [f"- {candidate['id']}: {candidate['status']} / {candidate['observation']}",
-                  f"  根拠: [{candidate['evidence']}](../{candidate['evidence']})"]
+        index += [
+            f"- {candidate['id']}: {candidate['status']} / {candidate['observation']}",
+            f"  根拠: [{candidate['evidence']}](../{candidate['evidence']})",
+        ]
         if "design" in candidate:
             name = f"skill-{candidate['id']}-DESIGN.md"
             design = candidate["design"]
-            output[name] = (f"# スキル設計 {candidate['id']}: {design['name']}\n\n"
-                            f"状態: {candidate['status']}\n\n承認対象ハッシュ: `{candidate['design_hash']}`\n\n"
-                            "承認後はこの資源一覧・適用範囲内で実装、テスト、反映まで進めます。\n\n"
-                            f"```json\n{dump(design)}\n```\n")
+            output[name] = (
+                f"# スキル設計 {candidate['id']}: {design['name']}\n\n"
+                f"状態: {candidate['status']}\n\n承認対象ハッシュ: `{candidate['design_hash']}`\n\n"
+                "承認後はこの資源一覧・適用範囲内で実装、テスト、反映まで進めます。\n\n"
+                f"```json\n{dump(design)}\n```\n"
+            )
             index += [f"  設計: [{name}]({name})"]
     for skill in state.get("active_skills", {}).values():
-        index += [f"- 有効版: {skill['name']} / `{skill['version']}` / テスト {skill['tests_passed']}件",
-                  f"  保存先: `{skill['path']}` / 適用: {', '.join(skill['phases'])}"]
+        index += [
+            f"- 有効版: {skill['name']} / `{skill['version']}` / テスト {skill['tests_passed']}件",
+            f"  保存先: `{skill['path']}` / 適用: {', '.join(skill['phases'])}",
+        ]
     output["SKILL_EVOLUTION.md"] = "\n".join(index) + "\n"
     return output
