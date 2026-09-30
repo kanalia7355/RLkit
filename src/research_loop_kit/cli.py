@@ -40,6 +40,7 @@ def parser():
         cmd.add_argument("--file", required=True)
     next_p = sub.add_parser("next", help="現在のAgent向けに1件の作業票を取得")
     next_p.add_argument("root")
+    next_p.add_argument("--kind", choices=("deepen", "ideas", "plan", "implement", "implementation_review", "review"))
     submit = sub.add_parser("submit")
     submit.add_argument("root")
     submit.add_argument("job", type=int)
@@ -226,14 +227,19 @@ def main(argv=None):
             job = engine.claim(
                 set(KINDS)
                 if command == "skill-next"
-                else {"deepen", "ideas", "plan", "implement", "implementation_review", "review", *KINDS}
+                else (
+                    {args.kind}
+                    if args.kind
+                    else {"deepen", "ideas", "plan", "implement", "implementation_review", "review", *KINDS}
+                )
             )
             output = (
                 engine.ticket(job)
                 if job
                 else {
                     "phase": engine.status()["phase"],
-                    "message": "取得できるAI作業はありません。statusで実行中・失敗・実験待ちを確認してください",
+                    "message": "取得できるAI作業はありません。診断の次の操作を確認してください",
+                    "diagnostics": engine.status()["diagnostics"],
                 }
             )
         elif command in ("submit", "skill-submit"):
@@ -297,6 +303,7 @@ def main(argv=None):
                 "backend": state["config"]["backend"],
                 "cli_paths": {name: shutil.which(name) for name in ("codex", "claude", "gemini", "opencode")},
                 "phase": state["phase"],
+                "diagnostics": state["diagnostics"],
                 "unfinished": [
                     {"id": j["id"], "kind": j["kind"], "status": j["status"], "token": j["token"], "error": j["error"]}
                     for j in state["jobs"]

@@ -11,8 +11,9 @@ import sys
 import time
 import uuid
 
-from . import evolution, quality, shared_source
+from . import evolution, quality, references, shared_source, stopping
 from .config import QUESTIONS, LoopError, dump, nonempty, number, read_json, strings, validate
+from .diagnostics import diagnose
 from .fsutil import write_atomic, write_new
 from .guards import inspect_code, summarize_effects, verify_evidence, verify_reports
 from .prompts import render
@@ -39,6 +40,7 @@ class Engine:
             state["history"] = self.store.history(db)
             state["jobs"] = self.store.jobs(db)
             state["failed_attempts"] = self._failed_attempts(db)
+            state["diagnostics"] = diagnose(state, self._claim_blocker, self._budget_exhausted)
             return state
 
     @staticmethod
@@ -143,7 +145,12 @@ class Engine:
                 db,
                 state["cycle"],
                 "plan",
-                {"candidates": state["candidates"], "previous_proposal": state["proposal"], "feedback": feedback},
+                {
+                    "candidates": state["candidates"],
+                    "previous_proposal": state["proposal"],
+                    "feedback": feedback,
+                    "require_stop_policy": True,
+                },
             )
             state["phase"] = "planning"
             self.store.event(db, "revision_requested", {"feedback": feedback})
@@ -496,6 +503,7 @@ class Engine:
             raise LoopError("採用実験数が設定と一致しません")
         known = {c["id"] for c in state["candidates"]}
         seen = set()
+        references.validate_references(result)
         for i, plan in enumerate(plans):
             required(
                 plan,
@@ -518,6 +526,13 @@ class Engine:
             seen.add(plan["candidate_id"])
             if plan["direction"] not in ("minimize", "maximize") or number(plan.get("min_effect"), "min_effect") < 0:
                 raise LoopError("主指標の方向または効果量が不正です")
+            if job["payload"].get("require_stop_policy") and "stop_policy" not in plan:
+                raise LoopError("新しい計画には構造化したstop_policyが必要です")
+            if "stop_policy" in plan:
+                try:
+                    stopping.validate_policy(plan["stop_policy"])
+                except ValueError as exc:
+                    raise LoopError(str(exc)) from exc
             plan["id"] = f"e{i + 1}"
 
     def _check_implement(self, job, result, state):
@@ -533,6 +548,10 @@ class Engine:
                 ast.parse(content, filename=name)
             except SyntaxError as exc:
                 raise LoopError(f"実装の構文エラー: {exc}") from exc
+        if job["payload"]["experiment"].get("stop_policy"):
+            if "rlk_stop.py" in files and files["rlk_stop.py"] != quality.stop_source():
+                raise LoopError("rlk_stop.pyはランタイムが版固定する予約名です")
+            files["rlk_stop.py"] = quality.stop_source()
         result["code_audit"] = inspect_code(files)
         shared_source.prepare(self.root, job, result)
 
@@ -682,7 +701,7 @@ class Engine:
                 if j["kind"] == "ideas":
                     candidates += j["result"]["candidates"]
             state["candidates"] = [dict(c, id=f"c{i + 1}") for i, c in enumerate(candidates)]
-            self.store.job(db, state["cycle"], "plan", {"candidates": state["candidates"]})
+            self.store.job(db, state["cycle"], "plan", {"candidates": state["candidates"], "require_stop_policy": True})
             state["phase"] = "planning"
         elif kind == "plan":
             state.update(phase="approval", proposal=result, proposal_hash=digest(result))
@@ -699,6 +718,9 @@ class Engine:
                         "experiment": job["payload"]["experiment"],
                         "implementation": result,
                         "implementation_job": job["id"],
+                        "validation_seed": next(
+                            x for x in range(len(state["config"]["seeds"]) + 1) if x not in state["config"]["seeds"]
+                        ),
                         "proposal_hash": job["payload"]["proposal_hash"],
                         "data_manifest": quality.data_manifest(self.root, state["config"]["data_files"]),
                     },
@@ -829,6 +851,7 @@ class Engine:
             write_new(code_dir / name, code)
         manifest = {
             "experiment": experiment,
+            "references": state.get("proposal", {}).get("references", []),
             "proposal_hash": job["payload"]["proposal_hash"],
             "code_hash": digest(sources),
             "seeds": seeds,
@@ -884,6 +907,8 @@ class Engine:
                         "PYTHONPATH": str(code_dir / "src"),
                         "PYTHONDONTWRITEBYTECODE": "1",
                         "RLK_INPUT_DIR": inputs,
+                        "RLK_STOP_POLICY": dump(experiment.get("stop_policy")),
+                        "RLK_STOP_RECORD": str(run_dir / "termination.json"),
                     },
                 )
                 metrics = read_json(output)
@@ -893,6 +918,8 @@ class Engine:
                     raise LoopError("測定値のseedが実行seedと一致しません")
                 number(metrics["baseline"], "baseline")
                 number(metrics["treatment"], "treatment")
+                if experiment.get("stop_policy"):
+                    quality.verify_stop(run_dir / "termination.json", experiment["stop_policy"])
                 metrics["wall_seconds"] = time.monotonic() - start
                 values.append(metrics)
                 elapsed = time.time() - manifest["started"]

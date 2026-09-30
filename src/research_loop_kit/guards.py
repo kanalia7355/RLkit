@@ -112,6 +112,8 @@ def verify_evidence(root, entry):
                 raise LoopError("保存された測定値と報告対象が一致しません")
             number(measured["baseline"], "baseline")
             number(measured["treatment"], "treatment")
+            if manifest["experiment"].get("stop_policy"):
+                quality.verify_stop(run_dir / "termination.json", manifest["experiment"]["stop_policy"])
             for name in ("stdout.log", "stderr.log"):
                 if not (run_dir / name).is_file():
                     raise LoopError(f"実行ログがありません: {name}")

@@ -12,6 +12,7 @@ from .config import QUESTIONS, LoopError, dump, make_config, nonempty
 from .engine import Engine
 from .fsutil import no_links, write_atomic
 from .importing import copy_snapshot, preview, validate_context
+from .quality import data_manifest, snapshot_inputs
 from .reporting import compact_history
 from .setup import initialize
 from .shared_source import read_sources
@@ -28,6 +29,7 @@ ACTIONS = {
     "continue": "前回の方針・予算のまま続ける",
     "review": "方針・結果だけを見る（実験を動かさない）",
     "improve": "スキル設計の確認・承認・反映を進める（実験を動かさない）",
+    "confirm": "探索結果を固定条件・未使用seedで確認する",
     "revise": "前回の方針を修正して、別の研究として提案し直す",
     "reselect": "保存済みの候補から選び直す",
     "branch": "関心・データを引き継ぎ、設定を変えて分岐する",
@@ -124,6 +126,8 @@ class Sessions:
             disabled = can_continue(state)
             choices = [{"id": action, "label": label, "available": True} for action, label in ACTIONS.items()]
             for choice in choices:
+                if choice["id"] == "confirm" and not state["diagnostics"]["confirmation_candidates"]:
+                    choice.update(available=False, reason="完了済み・検証済み・閾値到達の探索結果と残り予算が必要です")
                 if choice["id"] == "continue" and disabled:
                     choice.update(available=False, reason=disabled)
                 if choice["id"] == "revise" and not plan:
@@ -146,6 +150,7 @@ class Sessions:
                     "last_results": state["history"][-1:],
                     "settings": state["config"],
                     "paused": state["paused"],
+                    "diagnostics": state["diagnostics"],
                     "remaining": {
                         "seconds": remaining,
                         "agent_calls": max(0, state["config"]["max_agent_calls"] - state["agent_calls"]),
@@ -293,7 +298,7 @@ class Sessions:
         settings = settings or {}
         if not isinstance(settings, dict):
             raise LoopError("設定変更はJSONオブジェクトが必要です")
-        if action in ("continue", "review", "improve") and (
+        if action in ("continue", "review", "improve", "confirm") and (
             settings or feedback or candidate_ids or plan_job is not None
         ):
             raise LoopError("設定・候補・方針を変更する場合は分岐を選択してください")
@@ -307,7 +312,7 @@ class Sessions:
                 target_id = digest(path)[:16]
             else:
                 path, target_id = source["path"], source["id"]
-            mode = {"review": "read_only", "improve": "skills"}.get(action, "work")
+            mode = {"review": "read_only", "improve": "skills", "confirm": "confirmation"}.get(action, "work")
             selection = {"action": action, "project_id": target_id, "path": path, "mode": mode}
             session.update(status="selected", selection=selection)
             db.execute("UPDATE sessions SET body=? WHERE id=?", (dump(session), session_id))
@@ -323,6 +328,8 @@ class Sessions:
             raise LoopError("表示後に研究状態が変わりました。最新の入口を開いて選び直してください")
         if action == "continue" and can_continue(source["state"]):
             raise LoopError(can_continue(source["state"]))
+        if action == "confirm" and not source["state"]["diagnostics"]["confirmation_candidates"]:
+            raise LoopError("確認できる探索結果または残り予算がありません")
         return source
 
     @staticmethod
@@ -370,14 +377,29 @@ class Sessions:
         old_plan = self._base_plan(source, plan_job)
         selected = self._chosen_candidates(action, source, old_plan, cfg, feedback, candidate_ids)
         cfg = make_config(cfg)
-        directory = self.home / "projects" / ("study-" + uuid.uuid4().hex[:12])
-        initialize(directory, cfg)
-        if source:
-            self._inherit(Engine(directory), source, action, feedback, old_plan, selected, candidate_ids)
+        identifier = "study-" + uuid.uuid4().hex[:12]
+        directory = self.home / "projects" / identifier
+        staging = self.home / "import-staging" / identifier
+        for parent in (directory.parent, staging.parent):
+            parent.mkdir(parents=True, exist_ok=True)
+            no_links(parent, self.root)
+        try:
+            initialize(staging, cfg)
+            if source:
+                self._inherit(Engine(staging), source, action, feedback, old_plan, selected, candidate_ids)
+            staging.rename(directory)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
         return directory.relative_to(self.root).as_posix()
 
     def _inherit(self, engine, source, action, feedback, old_plan, selected, candidate_ids):
-        shared = read_sources(self.root / source["path"])
+        origin = self.root / source["path"]
+        shared = read_sources(origin)
+        inputs = data_manifest(origin, engine.status()["config"]["data_files"])
+        if any((engine.root / record["path"]).exists() for record in inputs):
+            raise LoopError("登録データが研究の初期化ファイルと衝突します。data/やimports/へ移してください")
+        snapshot_inputs(origin, engine.root, inputs)
         for relative, content in shared.items():
             write_atomic(engine.root / "src" / relative, content)
         previous = source["state"]
@@ -394,6 +416,7 @@ class Sessions:
                 "deepening": previous.get("deepening"),
                 "history": compact_history(previous["history"]),
                 "shared_source_hash": digest(shared),
+                "data_manifest": inputs,
             }
             if previous.get("imported_research"):
                 state["prior_research"]["imported_research"] = previous["imported_research"]
@@ -405,6 +428,7 @@ class Sessions:
                     "plan",
                     {
                         "candidates": selected,
+                        "require_stop_policy": True,
                         "previous_proposal": old_plan,
                         "feedback": feedback,
                         "user_selected_candidate_ids": candidate_ids,
@@ -419,6 +443,23 @@ class Sessions:
             if session["status"] != "selected":
                 raise LoopError("この新しいセッションの進め方がまだ選ばれていません")
             selected = session["selection"]
+            if selected["mode"] == "confirmation" and command not in (
+                "status",
+                "doctor",
+                "questions",
+                "confirm",
+                "next",
+                "submit",
+                "run",
+                "export",
+                "pause",
+                "resume",
+                "fail",
+                "recover",
+                "retry",
+                "skip-failed",
+            ):
+                raise LoopError("確認モードでは固定条件の確認実験と結果レビューだけを操作できます")
             if selected["mode"] == "read_only" and command not in ("status", "questions", "doctor"):
                 raise LoopError("結果を見るモードです。実験・状態の変更は別の入口で選んでください")
             if selected["mode"] == "skills" and command not in (

@@ -142,3 +142,6 @@ python tools/export_project.py --output dist/research-loop-kit-source.zip
 ## ライセンス
 
 [MIT License](LICENSE) で公開しています。
+
+研究の再開・データ分岐・構造化停止・出典管理は[研究ワークフロー](docs/RESEARCH_WORKFLOW.md)、
+今回の2題材の検証結果は[Active受け入れ検証](docs/ACTIVE_ACCEPTANCE.md)を参照してください。

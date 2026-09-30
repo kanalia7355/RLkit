@@ -139,6 +139,21 @@ def main(root, argv=None):
             if args.command not in allowed:
                 raise LoopError("この入口では指定された内部操作を使えません")
             path = hub.target(args.session, args.command)
+            with hub.db() as db:
+                selection = hub._read(db, args.session)["selection"]
+            if selection["mode"] == "confirmation":
+                if args.command == "next":
+                    args.args = ["--kind", "review"]
+                elif args.command == "run":
+                    args.args = ["--experiments-only"]
+                elif args.command in ("submit", "fail", "recover", "retry", "skip-failed"):
+                    from .engine import Engine
+
+                    state = Engine(path).status()
+                    identifier = int(args.args[0]) if args.args else None
+                    job = next((j for j in state["jobs"] if j["id"] == identifier), None)
+                    if not job or job["cycle"] != state["cycle"] or job["kind"] not in ("execute", "review"):
+                        raise LoopError("確認モードでは現在の確認実験・レビューの作業IDだけを指定してください")
             return loop_main([args.command, str(path), *args.args])
         print(dump(result))
         return 0

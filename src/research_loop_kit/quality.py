@@ -2,6 +2,7 @@
 
 import ast
 from importlib import metadata
+from importlib.resources import files
 import os
 from pathlib import PurePosixPath
 import re
@@ -28,7 +29,10 @@ def relative_file(root, name):
     if path.suffix.lower() in (".pem", ".key"):
         raise LoopError("認証用の鍵は実験入力に登録しません")
     target = root / name
-    no_links(target, root)
+    try:
+        no_links(target, root)
+    except FileNotFoundError as exc:
+        raise LoopError(f"登録データがありません: {name}") from exc
     if not target.is_file():
         raise LoopError(f"通常のデータファイルが必要です: {name}")
     return target
@@ -139,6 +143,28 @@ def test_implementation(root, job, result, directory, timeout):
     match = re.search(r"Ran ([1-9][0-9]*) tests?", log)
     if not match or "\nOK" not in log or "skipped=" in log:
         raise LoopError("少なくとも1件の未skip検証テスト成功が必要です")
+    policy = job["payload"]["experiment"].get("stop_policy")
+    stop_check = None
+    if policy:
+        check = work / "stop-check"
+        check.mkdir()
+        seed = job["payload"].get("validation_seed", 0)
+        process_run(
+            [sys.executable, str(work / "experiment.py"), "--seed", str(seed), "--output", str(check / "metrics.json")],
+            check,
+            check / "stdout.log",
+            check / "stderr.log",
+            min(timeout, 60),
+            env_overrides={
+                "PYTHONPATH": str(work / "src"),
+                "RLK_INPUT_DIR": inputs,
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "RLK_STOP_POLICY": dump(policy),
+                "RLK_STOP_RECORD": str(check / "termination.json"),
+            },
+        )
+        record = verify_stop(check / "termination.json", policy)
+        stop_check = {"seed": seed, "record": record}
     observed = read_code(work)
     expected = dict(sources, **{"tests/" + p: text for p, text in result["tests"].items()})
     if (
@@ -148,6 +174,7 @@ def test_implementation(root, job, result, directory, timeout):
     ):
         raise LoopError("検証中にコード・テスト・入力データが変更されました")
     validation = {
+        "stop_check": stop_check,
         "environment": environment(),
         "code_hash": digest(sources),
         "plan_hash": digest(job["payload"]["experiment"]),
@@ -174,6 +201,13 @@ def verify_validation(root, validation, sources, experiment):
         or {p: text for p, text in code.items() if not p.startswith("tests/")} != sources
     ):
         raise LoopError("実行前検証のコード・テストが変更されています")
+    if experiment.get("stop_policy"):
+        check = validation.get("stop_check")
+        if (
+            not check
+            or verify_stop(directory / "stop-check/termination.json", experiment["stop_policy"]) != check["record"]
+        ):
+            raise LoopError("停止条件の実行前検証記録が一致しません")
     for name in ("stdout.log", "stderr.log"):
         if not (directory / name).is_file():
             raise LoopError("実行前検証ログがありません")
@@ -185,3 +219,16 @@ def claim_stage(result):
     if result.get("manifest", {}).get("stage") == "confirmation":
         return "確認実験で閾値到達" if result.get("threshold_met") else "確認実験で未支持"
     return "探索段階（独立した確認実験は未実施）"
+
+
+def stop_source():
+    return files("research_loop_kit").joinpath("stopping.py").read_text(encoding="utf-8")
+
+
+def verify_stop(path, policy):
+    from .stopping import verify_record
+
+    try:
+        return verify_record(read_json(path), policy)
+    except (OSError, ValueError, LoopError) as exc:
+        raise LoopError(f"停止条件の検証に失敗しました: {exc}") from exc
