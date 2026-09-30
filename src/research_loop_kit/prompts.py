@@ -91,6 +91,16 @@ SCHEMAS = {
     },
 }
 
+SCHEMAS["implementation_review"] = {
+    "decision": "approved / rejected",
+    "summary": "計画と実装の照合結果",
+    "checks": {
+        key: {"status": "passed / failed / not_applicable", "evidence": "コードの位置と確認した動作"}
+        for key in ("metric", "baseline", "treatment", "data_split", "seed")
+    },
+    "tests": {"test_contract.py": "計画に対応する正常・異常条件を検証するunittest。実装から独立に期待値を決める"},
+}
+
 INSTRUCTIONS = {
     "skill_design": "候補の根拠を実際に読み、研究固有の小さなスキルを設計する。必須項目を全て埋める。referencesは実在する根拠・仕様の出典、同梱パス、用途を必ず記す。候補のevidenceを少なくとも1件のsourceに含める。scripts/assetsが不要ならprocedure内に理由を書き、空の資源は作らない。必要なら具体的な資源一覧に追加する。テストは成功・失敗の期待動作を設計する。実装・反映はまだ行わない。",
     "skill_build": "承認済み設計の資源一覧と適用範囲を守り、全ファイルをfilesへ返す。SKILL.mdにはfrontmatter name/descriptionと、いつ読むかが分かるreferencesへの相対リンクを含める。referencesの内容を実際に作り出典を残す。tests/test_*.pyはunittestで自動実行される。スクリプトがあるなら実際に呼んで成功・失敗条件を確かめる。説明だけのスキルでも必須入力欠落などの契約を確認する。外部送信・インストール・研究データ変更・ネットワークはテストに含めない。テスト実行と有効化はランタイムに任せ、状態DBや他のファイルを直接変更しない。",
@@ -100,6 +110,16 @@ INSTRUCTIONS = {
     "implement": '承認済み計画に忠実なPython実装を返す。filesのexperiment.pyは引数処理・条件設定・共通関数の呼出し・出力を中心に短く保つ。前処理・計算手法・指標・共通I/Oはshared_filesへ分離し、研究内src/research等に蓄積する。入力shared_sourcesの既存APIを確認して再利用し、実験ごとに同じ計算をコピーしない。shared_filesはsrcからの相対.pyパスと変更後全文の辞書。変更不要なら{}。入口からはfrom research.methods import ...のようにimportする。ランタイムが実行時のsrcを版固定してPYTHONPATHを設定する。--seed INTEGER --output PATHを受け付け、指定PATHへUTF-8 JSON {"seed":INTEGER,"baseline":数値,"treatment":数値}を書き出す。主指標は計画のmetric。seedを両条件へ適用しデータ漏洩を防ぐ。計算から数値を得る。結果のハードコード禁止。ネットワーク・パッケージインストール・外部送信は埋め込まない。入力データは読み取り専用。共通srcを直接書き換えずJSONで提案する。共通API変更の影響と検証をnotesに記す。',
     "review": "コード、事前登録、実行ログ、実測集計を照合する。失敗・欠損を支持結果にしない。threshold_metは記述的な判定で統計的有意差ではない。研究結論の妥当性を検討し、未確認の再現性を保証しない。全実験をidで列挙し、次候補と再利用できる知見を示す。",
 }
+
+INSTRUCTIONS["implementation_review"] = (
+    "計画と固定実装を照合し、指標・対照・介入・データ分割・seedの各確認に具体的根拠を記す。実装作成と別作業として評価するが同じAgentの場合は独立査読を名乗らない。不一致ならrejected。approvedではunittestをtestsへ返す。期待値を実装の出力から写さず、手計算や不変条件から決める。外部送信・インストールは禁止。入力ファイルは環境変数RLK_INPUT_DIR配下の固定コピーを参照する。計画で使う評価seedをテストで探索せず、小さな検証用条件を使う。状態DB・共通srcを直接編集しない。ランタイムがテストを実行し、合格後だけ本実験を開始する。"
+)
+INSTRUCTIONS["implement"] += (
+    " 入力ファイルはconfig.data_filesへ登録済みのものをRLK_INPUT_DIR配下から読み、原本の絶対パスを使わない。データ不要なら生成規則とseedの用途をnotesへ記す。"
+)
+INSTRUCTIONS["review"] += (
+    " status=partialは途中結果であり支持にしない。探索結果とconfirmationを区別し、探索の閾値到達を確立した知見として書かない。確認実験も指定条件での再確認であり、一般化や統計的有意差の保証ではない。"
+)
 
 PHASE_SKILLS = {
     "skill_design": ["auto-skill-pipeline"],
@@ -121,9 +141,14 @@ PHASE_SKILLS = {
 }
 
 
+PHASE_SKILLS["implementation_review"] = ["research-experiment", "experiment-review-panel", "dead-impl-detector"]
+
+
 def payload_view(job, root):
     """作業票に載せる入力。実装ジョブではハッシュ参照の共通srcを全文へ展開する。"""
     payload = job["payload"]
+    if root is not None and job["kind"] == "implementation_review":
+        payload = dict(payload, code=shared_source.code_files(root, payload["implementation"]))
     if root is not None and "shared_source_hash" in payload:
         payload = dict(payload, shared_sources=shared_source.load_version(root, payload["shared_source_hash"]))
     return payload
@@ -147,11 +172,15 @@ def render(job, state, response_path, root=None):
             directory = (root / active["path"]).resolve()
             if not directory.is_relative_to(root.resolve()):
                 raise ValueError("有効スキルのパスが研究外です")
+            if active.get("utility_assessment"):
+                from .evolution import verify_utility
+
+                verify_utility(root, active["utility_assessment"])
             content = {p: (directory / p).read_text(encoding="utf-8") for p in active["files"]}
             if digest(content) != active["version"]:
                 raise ValueError("有効スキルが検証後に変更されています。無効化して再設計してください")
             skill += (
-                f"\n\n## 承認・検証済み研究スキル: {active['name']}\n資源の基準パス: {directory}\n"
+                f"\n\n## 承認・動作検証済み研究スキル: {active['name']}\n検証段階: {active.get('quality_status', 'behavior_validated')}（全場面の有用性を保証しない）\n資源の基準パス: {directory}\n"
                 + content["SKILL.md"]
             )
             for path, text in content.items():

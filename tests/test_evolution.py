@@ -71,10 +71,10 @@ class EvolutionTests(unittest.TestCase):
         self.assertTrue((self.root / active["path"] / "references/evidence.md").is_file())
         job = {"kind": "review", "id": 900, "token": "test", "payload": {}}
         prompt = render(job, state, self.root / "response.json", self.root)
-        self.assertIn("承認・検証済み研究スキル: demo-evidence-check", prompt)
+        self.assertIn("承認・動作検証済み研究スキル: demo-evidence-check", prompt)
         self.engine.disable_skill(active["name"])
         self.assertNotIn(
-            "承認・検証済み研究スキル: demo-evidence-check",
+            "承認・動作検証済み研究スキル: demo-evidence-check",
             render(job, self.engine.status(), self.root / "response.json", self.root),
         )
         self.assertTrue((self.root / active["path"] / "test.stderr.log").is_file())

@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 
-from . import evolution, shared_source
+from . import evolution, quality, shared_source
 from .config import QUESTIONS, LoopError, dump, nonempty, number, read_json, strings, validate
 from .fsutil import write_atomic, write_new
 from .guards import inspect_code, summarize_effects, verify_evidence, verify_reports
@@ -167,6 +167,63 @@ class Engine:
                 },
             )
 
+    def confirm(self, cycle, experiment_id, expected_hash, seeds):
+        """明示的な依頼で、コード・比較条件を変えず未使用seedの確認実験を開始する。"""
+        if (
+            not isinstance(seeds, list)
+            or not seeds
+            or any(type(x) is not int or not 0 <= x < 2**32 for x in seeds)
+            or len(set(seeds)) != len(seeds)
+        ):
+            raise LoopError("確認実験には重複しない整数seedが必要です")
+        with self.store.transaction() as db:
+            state = self.store.state(db)
+            if state["phase"] != "complete" or state["paused"]:
+                raise LoopError("確認実験は停止していない完了済み研究から開始してください")
+            history = self.store.history(db)
+            entry = next((h for h in history if h["cycle"] == cycle), None)
+            source = next((r for r in entry["results"] if r["id"] == experiment_id), None) if entry else None
+            if (
+                not source
+                or source["status"] != "measured"
+                or not source["threshold_met"]
+                or digest(source) != expected_hash
+            ):
+                raise LoopError("閾値に到達した実測済みの結果と最新の結果ハッシュが必要です")
+            if source["manifest"].get("stage", "exploration") != "exploration":
+                raise LoopError("確認実験を探索結果として再利用できません")
+            verify_evidence(self.root, entry)
+            used = {seed for h in history for r in h["results"] for seed in r.get("manifest", {}).get("seeds", [])}
+            for previous in self.store.jobs(db):
+                if previous["kind"] == "execute":
+                    used.update(previous["payload"].get("seeds", state["config"]["seeds"]))
+            if used.intersection(seeds):
+                raise LoopError("確認seedは過去に使用・予約したseedと分けてください")
+            if self._budget_exhausted(state) or state["runs"] + len(seeds) > state["config"]["max_runs"]:
+                raise LoopError("確認実験の予算が不足しています。設定を変えて分岐してください")
+            if source["manifest"].get("environment") != quality.environment():
+                raise LoopError("探索時と実行環境が異なります。環境を再現するか条件変更として分岐してください")
+            origin = next(
+                (j for j in self.store.jobs(db, cycle) if j["kind"] == "execute" and j["result"] == source), None
+            )
+            if not origin or not origin["payload"].get("validation"):
+                raise LoopError("確認実験には実行前検証済みの実装が必要です")
+            next_cycle = max(h["cycle"] for h in history) + 1
+            spec = source["manifest"]["experiment"]
+            proposal = dict(entry["proposal"], experiments=[spec], direction="確認実験: " + entry["direction"])
+            state.update(cycle=next_cycle, phase="executing", proposal=proposal, proposal_hash=digest(proposal))
+            payload = dict(
+                origin["payload"],
+                seeds=seeds,
+                stage="confirmation",
+                proposal_hash=state["proposal_hash"],
+                confirmation_of={"cycle": cycle, "id": experiment_id, "result_hash": expected_hash},
+            )
+            self.store.job(db, next_cycle, "execute", payload)
+            self.store.save(db, state)
+            self.store.event(db, "confirmation_requested", {"source": payload["confirmation_of"], "seeds": seeds})
+        self.export()
+
     def pause(self):
         with self.store.transaction() as db:
             state = self.store.state(db)
@@ -224,6 +281,37 @@ class Engine:
             self.store.save(db, state)
         self.export()
 
+    def plan_skill_assessment(self, name, plan):
+        with self.store.transaction() as db:
+            state = self.store.state(db)
+            active = state.get("active_skills", {}).get(name)
+            if not active:
+                raise LoopError("評価計画の対象は有効なスキル名です")
+            protocol = evolution.plan_utility(self.root, active, plan)
+            if active.get("utility_assessment"):
+                active.setdefault("utility_history", []).append(active.pop("utility_assessment"))
+            active.update(utility_protocol=protocol, quality_status="behavior_validated")
+            self.store.save(db, state)
+            self.store.event(db, "skill_utility_planned", {"name": name, "hash": protocol["hash"]})
+        self.export()
+        return protocol["hash"]
+
+    def assess_skill(self, name, assessment):
+        with self.store.transaction() as db:
+            state = self.store.state(db)
+            active = state.get("active_skills", {}).get(name)
+            if not active:
+                raise LoopError("評価対象は有効なスキル名を指定してください")
+            result = evolution.assess_utility(self.root, active, assessment)
+            active.update(quality_status=result["status"], utility_assessment=result)
+            self.store.save(db, state)
+            self.store.event(
+                db,
+                "skill_utility_assessed",
+                {"name": name, "version": active["version"], "status": result["status"], "hash": digest(result)},
+            )
+        self.export()
+
     def disable_skill(self, name):
         with self.store.transaction() as db:
             state = self.store.state(db)
@@ -231,7 +319,10 @@ class Engine:
                 raise LoopError("有効なスキル名を指定してください")
             previous = state["active_skills"].pop(name)
             for candidate in state.get("skill_candidates", []):
-                if candidate.get("activation") == previous and candidate["status"] == "active":
+                if (
+                    candidate.get("activation", {}).get("version") == previous["version"]
+                    and candidate["status"] == "active"
+                ):
                     candidate["status"] = "disabled"
             self.store.event(db, "skill_disabled", previous)
             self.store.save(db, state)
@@ -285,6 +376,11 @@ class Engine:
         if is_skill:
             if state.get("skill_calls", 0) >= cfg["max_skill_calls"]:
                 return "スキル作業回数の上限です"
+        elif kind == "implementation_review":
+            if state.get("validation_calls", 0) >= cfg["max_validation_calls"]:
+                return "実行前レビュー回数の上限です"
+            if state["started"] and time.time() - state["started"] >= cfg["max_wall_seconds"]:
+                return "研究セッションの実時間上限です"
         elif kind == "review":
             # 実測済みの結果を報告できないまま止めないため、レビューは実時間・作業回数の上限を免除する。
             pass
@@ -298,7 +394,13 @@ class Engine:
         token = uuid.uuid4().hex
         job.update(status="running", attempt=job["attempt"] + 1, token=token, started=time.time())
         if job["kind"] != "execute":
-            counter = "skill_calls" if job["kind"] in evolution.KINDS else "agent_calls"
+            counter = (
+                "skill_calls"
+                if job["kind"] in evolution.KINDS
+                else "validation_calls"
+                if job["kind"] == "implementation_review"
+                else "agent_calls"
+            )
             state[counter] = state.get(counter, 0) + 1
         db.execute(
             "UPDATE jobs SET status='running',attempt=?,token=?,started=?,error=NULL WHERE id=?",
@@ -338,6 +440,7 @@ class Engine:
             "ideas": self._check_ideas,
             "plan": self._check_plan,
             "implement": self._check_implement,
+            "implementation_review": self._check_implementation_review,
             "review": self._check_review,
         }.get(job["kind"])
         if validator is None:
@@ -434,6 +537,10 @@ class Engine:
         shared_source.prepare(self.root, job, result)
 
     @staticmethod
+    def _check_implementation_review(job, result, state):
+        quality.validate_review(result)
+
+    @staticmethod
     def _check_review(job, result, state):
         reviews = result.get("experiments")
         measured = {x["id"]: x for x in job["payload"]["results"]}
@@ -460,7 +567,10 @@ class Engine:
             if not job or job["status"] != "running" or job["token"] != token:
                 raise LoopError("作業ID・token・実行状態が一致しません（再送も拒否します）")
             self.validate_result(job, result, state)
-            if job["kind"] != "skill_build":
+            needs_tests = job["kind"] == "skill_build" or (
+                job["kind"] == "implementation_review" and result["decision"] == "approved"
+            )
+            if not needs_tests:
                 self._finish(db, state, job, result)
                 # ファイル反映はDB更新がすべて成功した後、commitの直前に行う。
                 if job["kind"] == "implement":
@@ -470,18 +580,30 @@ class Engine:
         # 承認済みスキルのテストはDBロックの外で実行する。
         try:
             remaining = state["config"]["agent_timeout_seconds"] - (time.time() - job["started"])
-            if remaining <= 0 or state.get("skills_paused", state["paused"]):
+            paused = state.get("skills_paused", state["paused"]) if job["kind"] == "skill_build" else state["paused"]
+            if job["kind"] == "implementation_review" and state["started"]:
+                remaining = min(remaining, state["config"]["max_wall_seconds"] - (time.time() - state["started"]))
+            if remaining <= 0 or paused:
                 raise LoopError("停止中または時間上限のためスキルを検証できません")
-            result["activation"] = evolution.build(self.root, job, result, remaining)
+            if job["kind"] == "skill_build":
+                result["activation"] = evolution.build(self.root, job, result, remaining)
+            else:
+                result["validation"] = quality.test_implementation(
+                    self.root, job, result, self.ticket_dir(job), remaining
+                )
         except Exception as exc:
-            self.fail(job_id, token, f"スキル検証失敗: {exc}")
+            self.fail(job_id, token, f"動作検証失敗: {exc}")
             self.export()
             raise
         with self.store.transaction() as db:
             state = self.store.state(db)
             live = db.execute("SELECT status,token FROM jobs WHERE id=?", (job_id,)).fetchone()
-            if live["status"] != "running" or live["token"] != token or state.get("skills_paused", state["paused"]):
-                raise LoopError("実行権失効または停止のためスキルを反映しません")
+            if (
+                live["status"] != "running"
+                or live["token"] != token
+                or (state.get("skills_paused", state["paused"]) if job["kind"] == "skill_build" else state["paused"])
+            ):
+                raise LoopError("実行権失効または停止のため検証結果を反映しません")
             self._finish(db, state, job, result)
 
     def _finish(self, db, state, job, result):
@@ -523,7 +645,11 @@ class Engine:
         with self.store.transaction() as db:
             state = self.store.state(db)
             job = next((j for j in self.store.jobs(db) if j["id"] == job_id), None)
-            if not job or job["status"] != "failed" or job["kind"] not in ("implement", "execute"):
+            if (
+                not job
+                or job["status"] != "failed"
+                or job["kind"] not in ("implement", "implementation_review", "execute")
+            ):
                 raise LoopError("実装・実行の失敗だけを未支持として分析へ送れます")
             result = {
                 "id": job["payload"]["experiment"]["id"],
@@ -531,6 +657,8 @@ class Engine:
                 "threshold_met": False,
                 "error": job["error"],
             }
+            if job["kind"] == "implementation_review":
+                result.update(decision="rejected", summary=job["error"])
             self.store.event(db, "failed_experiment_included", {"id": job_id, "error": job["error"]})
             self._finish(db, state, job, result)
 
@@ -566,14 +694,28 @@ class Engine:
                 self.store.job(
                     db,
                     state["cycle"],
-                    "execute",
+                    "implementation_review",
                     {
                         "experiment": job["payload"]["experiment"],
                         "implementation": result,
                         "implementation_job": job["id"],
                         "proposal_hash": job["payload"]["proposal_hash"],
+                        "data_manifest": quality.data_manifest(self.root, state["config"]["data_files"]),
                     },
                 )
+            self._maybe_review(db, state)
+        elif kind == "implementation_review":
+            if result["decision"] == "approved":
+                self.store.job(db, state["cycle"], "execute", dict(job["payload"], validation=result["validation"]))
+            else:
+                # A rejected implementation is an explicit failed experiment; no process is started.
+                result.update(
+                    id=job["payload"]["experiment"]["id"],
+                    status="failed",
+                    threshold_met=False,
+                    error="実行前レビューで不承認: " + result["summary"],
+                )
+                db.execute("UPDATE jobs SET result=? WHERE id=?", (dump(result), job["id"]))
             self._maybe_review(db, state)
         elif kind == "execute":
             self._maybe_review(db, state)
@@ -594,6 +736,19 @@ class Engine:
             "results": results,
             "review": review,
         }
+        entry["claim_status"] = {
+            r["id"]: (
+                "confirmed"
+                if r.get("manifest", {}).get("stage") == "confirmation"
+                and r["status"] == "measured"
+                and r.get("threshold_met")
+                and next(v for v in review["experiments"] if v["id"] == r["id"])["assessment"] == "supported"
+                else "confirmation_inconclusive"
+                if r.get("manifest", {}).get("stage") == "confirmation"
+                else "exploratory"
+            )
+            for r in results
+        }
         checks = verify_evidence(self.root, entry)
         view = dict(
             state,
@@ -609,7 +764,10 @@ class Engine:
         self.store.event(db, "cycle_completed", {"cycle": state["cycle"]})
         evolution.detect(state, self.store, db, entry)
         stop = self._budget_exhausted(state)
-        if state["cycle"] >= state["config"]["max_cycles"]:
+        if (
+            any(r.get("manifest", {}).get("stage") == "confirmation" for r in results)
+            or state["cycle"] >= state["config"]["max_cycles"]
+        ):
             state["phase"] = "complete"
         elif stop:
             # 予算切れのまま次の候補作成を積まず、完了として分岐を案内する。
@@ -626,7 +784,7 @@ class Engine:
 
     def _maybe_review(self, db, state):
         jobs = self.store.jobs(db, state["cycle"])
-        work = [j for j in jobs if j["kind"] in ("implement", "execute")]
+        work = [j for j in jobs if j["kind"] in ("implement", "implementation_review", "execute")]
         if all(j["status"] == "done" for j in work if j["kind"] == "implement"):
             state["phase"] = "executing"
         if any(j["status"] != "done" for j in work):
@@ -658,13 +816,27 @@ class Engine:
         implementation = job["payload"]["implementation"]
         code_dir = directory / "code"
         sources = shared_source.code_files(self.root, implementation)
+        validation = job["payload"].get("validation")
+        if validation:
+            if validation.get("environment") != quality.environment():
+                raise LoopError("実行前検証後に実行環境が変更されています")
+            quality.verify_validation(self.root, validation, sources, experiment)
+        # Legacy already-queued execution jobs remain readable, but their reports say unreviewed.
+        expected_data = job["payload"].get("data_manifest", [])
+        inputs = quality.snapshot_inputs(self.root, directory / "inputs", expected_data)
+        seeds = job["payload"].get("seeds", cfg["seeds"])
         for name, code in sources.items():
             write_new(code_dir / name, code)
         manifest = {
             "experiment": experiment,
             "proposal_hash": job["payload"]["proposal_hash"],
             "code_hash": digest(sources),
-            "seeds": cfg["seeds"],
+            "seeds": seeds,
+            "stage": job["payload"].get("stage", "exploration"),
+            "confirmation_of": job["payload"].get("confirmation_of"),
+            "validation": validation,
+            "data_manifest": expected_data,
+            "environment": quality.environment(),
             "python": sys.version,
             "platform": platform.platform(),
             "started": time.time(),
@@ -676,58 +848,77 @@ class Engine:
             manifest["shared_source_hash"] = implementation["shared_source_hash"]
             manifest["experiment_path"] = implementation["experiment_path"]
         write_new(directory / "preregistration.json", dump(manifest))
+        write_new(directory / "environment.json", dump(manifest["environment"]))
+        write_new(
+            directory / "requirements-lock.txt",
+            "\n".join(f"{p['name']}=={p['version']}" for p in manifest["environment"]["packages"]) + "\n",
+        )
         values = []
-        for seed in cfg["seeds"]:
-            with self.store.transaction() as db:
-                current = self.store.state(db)
-                live = db.execute("SELECT status,token FROM jobs WHERE id=?", (job["id"],)).fetchone()
-                if live["status"] != "running" or live["token"] != job["token"]:
-                    raise LoopError("実行権が失効しました")
-                if current["paused"]:
-                    raise LoopError("一時停止により次のseedを起動しません")
-                remaining = cfg["max_wall_seconds"] - (time.time() - current["started"])
-                if remaining <= 0 or current["runs"] >= cfg["max_runs"]:
-                    raise LoopError("実験予算を使い切りました")
-                current["runs"] += 1
-                self.store.save(db, current)
-                self.store.event(db, "run_reserved", {"id": job["id"], "seed": seed, "attempt": job["attempt"]})
-            run_dir = directory / f"seed-{seed}"
-            run_dir.mkdir()
-            output = run_dir / "metrics.json"
-            start = time.monotonic()
-            process_run(
-                [sys.executable, str(code_dir / "experiment.py"), "--seed", str(seed), "--output", str(output)],
-                run_dir,
-                run_dir / "stdout.log",
-                run_dir / "stderr.log",
-                min(cfg["run_timeout_seconds"], remaining),
-                env_overrides={"PYTHONPATH": str(code_dir / "src"), "PYTHONDONTWRITEBYTECODE": "1"},
-            )
-            metrics = read_json(output)
-            if not isinstance(metrics, dict) or set(metrics) != {"seed", "baseline", "treatment"}:
-                raise LoopError("測定値の形式はseed/baseline/treatmentだけのオブジェクトです")
-            if type(metrics["seed"]) is not int or metrics["seed"] != seed:
-                raise LoopError("測定値のseedが実行seedと一致しません")
-            number(metrics["baseline"], "baseline")
-            number(metrics["treatment"], "treatment")
-            metrics["wall_seconds"] = time.monotonic() - start
-            values.append(metrics)
-            elapsed = time.time() - manifest["started"]
-            progress = {
-                "completed_seeds": [v["seed"] for v in values],
-                "remaining_seeds": cfg["seeds"][len(values) :],
-                "elapsed_seconds": elapsed,
-                "eta_seconds_estimate": elapsed / len(values) * (len(cfg["seeds"]) - len(values)),
-            }
-            write_atomic(directory / "progress.json", dump(progress) + "\n")
-            with self.store.transaction() as db:
-                self.store.event(db, "seed_completed", {"id": job["id"], "attempt": job["attempt"], **progress})
+        stopped = None
+        try:
+            for seed in seeds:
+                with self.store.transaction() as db:
+                    current = self.store.state(db)
+                    live = db.execute("SELECT status,token FROM jobs WHERE id=?", (job["id"],)).fetchone()
+                    if live["status"] != "running" or live["token"] != job["token"]:
+                        raise LoopError("実行権が失効しました")
+                    if current["paused"]:
+                        raise LoopError("一時停止により次のseedを起動しません")
+                    remaining = cfg["max_wall_seconds"] - (time.time() - current["started"])
+                    if remaining <= 0 or current["runs"] >= cfg["max_runs"]:
+                        raise LoopError("実験予算を使い切りました")
+                    current["runs"] += 1
+                    self.store.save(db, current)
+                    self.store.event(db, "run_reserved", {"id": job["id"], "seed": seed, "attempt": job["attempt"]})
+                run_dir = directory / f"seed-{seed}"
+                run_dir.mkdir()
+                output = run_dir / "metrics.json"
+                start = time.monotonic()
+                process_run(
+                    [sys.executable, str(code_dir / "experiment.py"), "--seed", str(seed), "--output", str(output)],
+                    run_dir,
+                    run_dir / "stdout.log",
+                    run_dir / "stderr.log",
+                    min(cfg["run_timeout_seconds"], remaining),
+                    env_overrides={
+                        "PYTHONPATH": str(code_dir / "src"),
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                        "RLK_INPUT_DIR": inputs,
+                    },
+                )
+                metrics = read_json(output)
+                if not isinstance(metrics, dict) or set(metrics) != {"seed", "baseline", "treatment"}:
+                    raise LoopError("測定値の形式はseed/baseline/treatmentだけのオブジェクトです")
+                if type(metrics["seed"]) is not int or metrics["seed"] != seed:
+                    raise LoopError("測定値のseedが実行seedと一致しません")
+                number(metrics["baseline"], "baseline")
+                number(metrics["treatment"], "treatment")
+                metrics["wall_seconds"] = time.monotonic() - start
+                values.append(metrics)
+                elapsed = time.time() - manifest["started"]
+                progress = {
+                    "completed_seeds": [v["seed"] for v in values],
+                    "remaining_seeds": seeds[len(values) :],
+                    "elapsed_seconds": elapsed,
+                    "eta_seconds_estimate": elapsed / len(values) * (len(seeds) - len(values)),
+                }
+                write_atomic(directory / "progress.json", dump(progress) + "\n")
+                with self.store.transaction() as db:
+                    self.store.event(db, "seed_completed", {"id": job["id"], "attempt": job["attempt"], **progress})
+        except Exception as exc:
+            if not values:
+                raise
+            stopped = f"{type(exc).__name__}: {exc}"
         after_code = shared_source.read_code(code_dir)
         if digest(after_code) != manifest["code_hash"]:
             raise LoopError("実行中に事前登録したコードが変更されました")
+        if quality.data_manifest(directory / "inputs", [f["path"] for f in expected_data]) != expected_data:
+            raise LoopError("実行中に固定した入力データが変更されました")
         result = {
             "id": experiment["id"],
-            "status": "measured",
+            "status": "partial" if stopped else "measured",
+            "planned_n": len(seeds),
+            "stop_reason": stopped,
             "n": len(values),
             **summarize_effects(values, experiment),
             "statistical_test": "未実施（記述統計。effect_ci95はpaired bootstrapの参考区間）",
@@ -735,6 +926,8 @@ class Engine:
             "evidence": directory.relative_to(self.root).as_posix(),
             "manifest": manifest,
         }
+        if stopped:
+            result["threshold_met"] = False
         write_new(directory / "analysis.json", dump(result))
         with self.store.transaction() as db:
             state = self.store.state(db)
@@ -771,7 +964,9 @@ class Engine:
         allowed = set() if skills_only else {"execute"}
         if not experiments_only:
             kinds = (
-                evolution.KINDS if skills_only else ("deepen", "ideas", "plan", "implement", "review", *evolution.KINDS)
+                evolution.KINDS
+                if skills_only
+                else ("deepen", "ideas", "plan", "implement", "implementation_review", "review", *evolution.KINDS)
             )
             allowed.update(kind for kind in kinds if dict(cfg, **cfg["roles"].get(kind, {}))["backend"] != "active")
         if not allowed:
@@ -884,6 +1079,9 @@ def cycle_document(state, entry):
         "|---|---|---:|---:|---:|---:|---:|---|",
     ]
     for r in entry["results"]:
+        lines += [
+            f"- {r['id']}: {quality.claim_stage(r)} / 完了 {r.get('n', 0)}/{r.get('planned_n', r.get('n', 0))} / 停止理由: {r.get('stop_reason') or r.get('error', 'なし')}"
+        ]
         lines.append(
             f"| {r['id']} | {r['status']} | {r.get('baseline_mean', '—')} | {r.get('treatment_mean', '—')}"
             f" | {r.get('effect_mean', '—')} | {_ci_text(r)} | {r.get('n', 0)} | {r['threshold_met']} |"

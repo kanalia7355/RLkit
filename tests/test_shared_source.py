@@ -51,6 +51,8 @@ class SharedSourceTests(unittest.TestCase):
         job = self.engine.claim({"implement"})
         response = respond(job, self.engine.status())
         self.engine.submit(job["id"], job["token"], response)
+        validation = self.engine.claim({"implementation_review"})
+        self.engine.work(validation)
         (self.root / "src/research/quadratic.py").write_text(
             "raise RuntimeError('latest must not execute')\n", encoding="utf-8"
         )

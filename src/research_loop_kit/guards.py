@@ -5,6 +5,7 @@ import hashlib
 import random
 import statistics
 
+from . import quality
 from .config import LoopError, number, read_json
 from .shared_source import read_code
 from .store import digest
@@ -93,7 +94,15 @@ def verify_evidence(root, entry):
         if digest(sources) != manifest["code_hash"]:
             raise LoopError("事前登録後に実験コードが変更されています")
         values = result["values"]
-        if [v["seed"] for v in values] != manifest["seeds"] or len(values) != result["n"]:
+        expected_seeds = manifest["seeds"][: len(values)] if result["status"] == "partial" else manifest["seeds"]
+        if result["status"] == "partial" and (
+            not values
+            or len(values) >= len(manifest["seeds"])
+            or not result.get("stop_reason")
+            or result.get("threshold_met")
+        ):
+            raise LoopError("途中結果の完了数・停止理由・判定が不正です")
+        if [v["seed"] for v in values] != expected_seeds or len(values) != result["n"]:
             raise LoopError("seed一覧と集計件数が一致しません")
         for value in values:
             run_dir = directory / f"seed-{value['seed']}"
@@ -106,7 +115,18 @@ def verify_evidence(root, entry):
             for name in ("stdout.log", "stderr.log"):
                 if not (run_dir / name).is_file():
                     raise LoopError(f"実行ログがありません: {name}")
+        if "environment" in manifest:
+            if read_json(directory / "environment.json") != manifest["environment"]:
+                raise LoopError("実行環境の保存記録が一致しません")
+        if "data_manifest" in manifest:
+            names = [f["path"] for f in manifest["data_manifest"]]
+            if quality.data_manifest(directory / "inputs", names) != manifest["data_manifest"]:
+                raise LoopError("実験の固定入力データが変更されています")
+        if manifest.get("validation"):
+            quality.verify_validation(root, manifest["validation"], sources, manifest["experiment"])
         expected = summarize_effects(values, manifest["experiment"])
+        if result["status"] == "partial":
+            expected["threshold_met"] = False
         # 旧版の集計には信頼区間がないため、記録されている項目だけを照合する。
         if "effect_ci95" not in result:
             expected.pop("effect_ci95")

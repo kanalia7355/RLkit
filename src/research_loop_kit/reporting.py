@@ -2,6 +2,8 @@
 
 from collections import defaultdict
 
+from .quality import claim_stage
+
 # 作業票や分岐元の記録へ渡す履歴から外す、大きく再計算可能な項目（全体はDBと証跡フォルダにある）。
 _HEAVY_RESULT_KEYS = ("values", "manifest")
 
@@ -27,6 +29,7 @@ def meeting_report(state, entry):
         entry["direction"],
         "",
         f"{len(entry['results'])}件の実験を報告する。数値の差は記述統計であり、統計的有意差の検定は未実施。",
+        "探索の閾値到達は確認済みの知見ではない。確認実験も指定条件での再確認であり、一般化を保証しない。",
         "",
         *[f"- {r['id']}: {r['assessment']} — {r['interpretation']}" for r in reviews],
         "",
@@ -49,6 +52,12 @@ def meeting_report(state, entry):
     for r in entry["results"]:
         spec = r.get("manifest", {}).get("experiment", specs.get(r["id"], {}))
         lines += [f"### {r['id']}: {spec.get('title', '実験名未記録')}", ""]
+        lines += [
+            f"- 研究段階: {claim_stage(r)}",
+            f"- 完了seed数 / 予定数: {r.get('n', 0)} / {r.get('planned_n', r.get('n', 0))}",
+            f"- 停止理由: {r.get('stop_reason') or r.get('error', 'なし')}",
+            f"- 実行前レビュー: {'検証済み' if r.get('manifest', {}).get('validation') else '未実施（旧記録または実行前失敗）'}",
+        ]
         for key, label in (
             ("hypothesis", "仮説"),
             ("method", "手順・固定条件"),
@@ -78,8 +87,8 @@ def meeting_report(state, entry):
             f" | {r.get('effect_mean', '—')} | {ci_text} | {r.get('n', 0)} | {r['threshold_met']} |"
         ]
     for r in entry["results"]:
-        if r.get("error"):
-            lines += ["", f"失敗記録 {r['id']}: {r['error']}", ""]
+        if r.get("error") or r.get("stop_reason"):
+            lines += ["", f"停止・失敗記録 {r['id']}: {r.get('stop_reason') or r.get('error')}", ""]
     lines += ["", "## 考察・限界", ""]
     for r in reviews:
         lines += [f"### {r['id']}: {r['assessment']}", "", r["interpretation"], "", f"限界: {r['limitations']}", ""]
@@ -133,7 +142,9 @@ def supporting_documents(state):
         clusters[entry["direction"]].append(link)
         knowledge += [f"## {link}", ""]
         for review in entry["review"]["experiments"]:
+            result = next(r for r in entry["results"] if r["id"] == review["id"])
             knowledge += [
+                f"- 研究段階: {claim_stage(result)} / 結論状態: {entry.get('claim_status', {}).get(review['id'], 'exploratory')}",
                 f"- {review['id']} / {review['assessment']}: {review['interpretation']}",
                 f"  限界: {review['limitations']}",
             ]

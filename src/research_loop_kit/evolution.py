@@ -160,6 +160,7 @@ def build(root, job, result, timeout):
         "files": list(result["files"]),
         "phases": design["phases"],
         "tests_passed": int(match[1]),
+        "quality_status": "behavior_validated",
         "design_hash": job["payload"]["design_hash"],
     }
 
@@ -183,9 +184,186 @@ def documents(state):
             )
             index += [f"  設計: [{name}]({name})"]
     for skill in state.get("active_skills", {}).values():
+        assessment = skill.get("utility_assessment")
+        quality = assessment["status"] if assessment else "behavior_validated（有用性未評価）"
         index += [
+            f"- 検証段階: {quality}",
             f"- 有効版: {skill['name']} / `{skill['version']}` / テスト {skill['tests_passed']}件",
             f"  保存先: `{skill['path']}` / 適用: {', '.join(skill['phases'])}",
         ]
     output["SKILL_EVOLUTION.md"] = "\n".join(index) + "\n"
     return output
+
+
+def assess_utility(root, active, assessment):
+    """テスト合格とは別に、固定版スキルの有無による事例比較を検査・保存する。"""
+    import uuid
+
+    from .config import number, read_json
+    from .fsutil import no_links
+
+    if not isinstance(assessment, dict) or assessment.get("version") != active["version"]:
+        raise LoopError("有用性評価は現在のスキル版を指定してください")
+    directory = root / active["path"]
+    content = {}
+    for name in active["files"]:
+        path = directory / name
+        no_links(path, root)
+        content[name] = path.read_text(encoding="utf-8")
+    if digest(content) != active["version"]:
+        raise LoopError("有効スキルの内容が変更されています")
+    protocol = active.get("utility_protocol")
+    if not protocol or assessment.get("protocol_hash") != protocol["hash"]:
+        raise LoopError("事例と指標を固定した有用性評価計画が先に必要です")
+    no_links(root / protocol["evidence"], root)
+    if read_json(root / protocol["evidence"]) != protocol["plan"]:
+        raise LoopError("事前の有用性評価計画が変更されています")
+    for key in ("version", "metric", "method", "direction", "minimum_improvement"):
+        if assessment.get(key) != protocol["plan"][key]:
+            raise LoopError("有用性評価の条件が事前計画と異なっています")
+    planned_cases = {c["id"]: c for c in protocol["plan"]["cases"]}
+    for key in ("metric", "method"):
+        nonempty(assessment.get(key), key)
+    direction = assessment.get("direction")
+    if direction not in ("minimize", "maximize"):
+        raise LoopError("有用性の評価方向が必要です")
+    threshold = number(assessment.get("minimum_improvement"), "最小改善幅")
+    if threshold <= 0:
+        raise LoopError("有用性の最小改善幅は正の数値です")
+    cases = assessment.get("cases")
+    if not isinstance(cases, list) or not 2 <= len(cases) <= 100:
+        raise LoopError("正常事例と悪化を検出する事例を含む2〜100件の比較が必要です")
+    ids, kinds, records, improvements = set(), set(), [], []
+    for case in cases:
+        if not isinstance(case, dict):
+            raise LoopError("比較事例はオブジェクトです")
+        nonempty(case.get("id"), "事例ID")
+        if case["id"] in ids or case.get("kind") not in ("normal", "adverse"):
+            raise LoopError("事例IDは重複不可、kindはnormal / adverseです")
+        if case["id"] not in planned_cases or case["kind"] != planned_cases[case["id"]]["kind"]:
+            raise LoopError("比較事例が事前計画と異なっています")
+        ids.add(case["id"])
+        kinds.add(case["kind"])
+        pair = []
+        for mode in ("baseline", "with_skill"):
+            item = case.get(mode)
+            if not isinstance(item, dict):
+                raise LoopError("スキルなし・ありの両方の証跡が必要です")
+            name = item.get("evidence")
+            nonempty(name, "評価証跡パス")
+            if (
+                "\\" in name
+                or ":" in name
+                or PurePosixPath(name).is_absolute()
+                or any(p in ("", ".", "..") or p.startswith(".") for p in name.split("/"))
+            ):
+                raise LoopError("評価証跡は研究内の通常ファイルを指定してください")
+            path = root / name
+            no_links(path, root)
+            if not path.is_file() or path.stat().st_size > 2_000_000:
+                raise LoopError("評価証跡は2MB以内のJSONファイルです")
+            evidence = read_json(path)
+            if not isinstance(evidence, dict) or any(
+                evidence.get(k) != value
+                for k, value in {
+                    "case_id": case["id"],
+                    "mode": mode,
+                    "skill_version": active["version"],
+                    "metric": assessment["metric"],
+                    "protocol_hash": protocol["hash"],
+                }.items()
+            ):
+                raise LoopError("評価証跡の事例・モード・スキル版・指標が一致しません")
+            if "input" not in evidence:
+                raise LoopError("比較した入力が証跡に必要です")
+            nonempty(evidence.get("outcome"), "評価対象の出力と判定根拠")
+            score = number(evidence.get("score"), "評価証跡のスコア")
+            if number(item.get("score"), "申告スコア") != score:
+                raise LoopError("申告スコアと保存した評価証跡が一致しません")
+            pair.append(evidence)
+            records.append({"case_id": case["id"], "mode": mode, "source": name, "body": evidence})
+        if pair[0]["input"] != pair[1]["input"] or pair[0]["input"] != planned_cases[case["id"]]["input"]:
+            raise LoopError("スキルの有無で比較入力が異なっています")
+        sign = 1 if direction == "maximize" else -1
+        improvements.append(sign * (pair[1]["score"] - pair[0]["score"]))
+    if ids != set(planned_cases):
+        raise LoopError("事前計画の全事例を比較してください")
+    if kinds != {"normal", "adverse"}:
+        raise LoopError("正常事例と悪化検出事例の両方が必要です")
+    mean = sum(improvements) / len(improvements)
+    status = (
+        "regression"
+        if any(x < 0 for x in improvements)
+        else "utility_supported"
+        if mean >= threshold
+        else "inconclusive"
+    )
+    folder = root / ".rlk/skill-evaluations" / active["name"] / uuid.uuid4().hex
+    files = {}
+    for i, record in enumerate(records):
+        filename = f"case-{i:03d}.json"
+        content = dump(record)
+        write_new(folder / filename, content)
+        files[filename] = digest(record)
+    result = dict(
+        assessment,
+        status=status,
+        mean_improvement=mean,
+        improvements=improvements,
+        evidence=folder.relative_to(root).as_posix(),
+        evidence_hashes=files,
+        limits="指定事例・指標による比較。スコアの妥当性・他の研究への一般化は別途レビューする。",
+    )
+    write_new(folder / "assessment.json", dump(result))
+    return result
+
+
+def verify_utility(root, assessment):
+    from .config import read_json
+    from .fsutil import no_links
+
+    directory = root / assessment["evidence"]
+    no_links(directory, root)
+    if read_json(directory / "assessment.json") != assessment:
+        raise LoopError("スキルの有用性評価記録が変更されています")
+    for name, expected in assessment["evidence_hashes"].items():
+        path = directory / name
+        no_links(path, root)
+        if digest(read_json(path)) != expected:
+            raise LoopError("スキルの比較証跡が変更されています")
+
+
+def plan_utility(root, active, plan):
+    """比較結果を見る前に、事例・評価指標・改善幅を固定する。"""
+    import uuid
+
+    from .config import number
+
+    if not isinstance(plan, dict) or plan.get("version") != active["version"]:
+        raise LoopError("有用性評価計画は現在のスキル版を指定してください")
+    for key in ("metric", "method"):
+        nonempty(plan.get(key), key)
+    if (
+        plan.get("direction") not in ("minimize", "maximize")
+        or number(plan.get("minimum_improvement"), "最小改善幅") <= 0
+    ):
+        raise LoopError("評価方向と正の最小改善幅を事前に指定してください")
+    cases = plan.get("cases")
+    if not isinstance(cases, list) or not 2 <= len(cases) <= 100:
+        raise LoopError("2〜100件の比較事例を事前に指定してください")
+    if any(
+        not isinstance(c, dict)
+        or not isinstance(c.get("id"), str)
+        or not c["id"]
+        or c.get("kind") not in ("normal", "adverse")
+        or "input" not in c
+        for c in cases
+    ):
+        raise LoopError("事例ID・normal/adverse・比較入力を事前に指定してください")
+    if len({c["id"] for c in cases}) != len(cases) or {c["kind"] for c in cases} != {"normal", "adverse"}:
+        raise LoopError("重複しない正常事例と悪化検出事例が必要です")
+    # dump also rejects nonfinite inputs before they enter the state database.
+    dump(plan)
+    path = root / ".rlk/skill-evaluation-plans" / active["name"] / (uuid.uuid4().hex + ".json")
+    write_new(path, dump(plan))
+    return {"plan": plan, "hash": digest(plan), "evidence": path.relative_to(root).as_posix()}

@@ -36,7 +36,7 @@ class GuardTests(unittest.TestCase):
         e.propose()
         e.run()
         e.accept(e.status()["proposal_hash"])
-        while job := e.claim({"implement"}):
+        while job := e.claim({"implement", "implementation_review"}):
             e.work(job)
         e.run(experiments_only=True)
         job = e.claim({"review"})
