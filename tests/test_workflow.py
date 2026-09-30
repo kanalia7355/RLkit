@@ -51,7 +51,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_branch_copies_binary_inputs_and_import_paths_independently(self):
         choice, e = self.create(data_files=["data/raw.bin", "imports/old/input.csv"])
-        for name, data in (("data/raw.bin", b"\x00\xff"), ("imports/old/input.csv", b"x\n3\n")):
+        for name, data in (("data/raw.bin", b"\x00\xff"), ("imports/old/input.csv", b"x\r\n3\r\n")):
             path = e.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
@@ -61,7 +61,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(target.status()["prior_research"]["data_manifest"][0]["bytes"], 2)
         (e.root / "data/raw.bin").write_bytes(b"changed")
         self.assertEqual((target.root / "data/raw.bin").read_bytes(), b"\x00\xff")
-        self.assertEqual((target.root / "imports/old/input.csv").read_bytes(), b"x\n3\n")
+        self.assertEqual((target.root / "imports/old/input.csv").read_bytes(), b"x\r\n3\r\n")
 
     def test_failed_copy_does_not_publish_study_or_select_session(self):
         choice, _ = self.create(data_files=["data/missing.csv"])
