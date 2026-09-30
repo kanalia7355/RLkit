@@ -135,4 +135,4 @@ python tools/export_project.py --output dist/research-loop-kit-source.zip
 
 ## ライセンス
 
-ライセンスは現在未設定です。
+[MIT License](LICENSE) で公開しています。
