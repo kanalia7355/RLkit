@@ -56,6 +56,17 @@ def verify(archive_path, wheel_path):
         subprocess.run(
             [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=source, env=env, check=True
         )
+        acceptance = subprocess.run(
+            [sys.executable, str(source / "tools/active_acceptance.py"), "--output", str(root / "active-acceptance")],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            encoding="utf-8",
+            check=True,
+        )
+        cases = json.loads(acceptance.stdout)
+        if len(cases) != 2 or any(c["runs"] != 6 or c["results"][-1]["claim"] != "confirmed" for c in cases):
+            raise ValueError("Active方式の受け入れ検証が完了していません")
         site = root / "installed"
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "--no-index", "--no-deps", "--target", str(site), str(wheel_path)],
@@ -135,6 +146,7 @@ def verify(archive_path, wheel_path):
                     "meeting_report": "PASS",
                     "approved_skill_evolution": "PASS",
                     "shared_source_reuse": "PASS",
+                    "active_acceptance": "PASS (2 cases, 12 seed runs; fixed responses)",
                 },
                 ensure_ascii=False,
             )

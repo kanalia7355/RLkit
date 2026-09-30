@@ -32,7 +32,7 @@ class QualityTests(unittest.TestCase):
         initialize(self.root, config)
         if config.get("data_files"):
             (self.root / "data").mkdir()
-            (self.root / "data/input.csv").write_text("x\n3\n", encoding="utf-8")
+            (self.root / "data/input.csv").write_bytes(b"x\n3\n")
         e = Engine(self.root)
         e.answer(ANSWERS)
         e.deepen()
@@ -65,7 +65,9 @@ class QualityTests(unittest.TestCase):
         self.assertIn(
             "code",
             json.loads(
-                (e.ticket(j) and Path(e.ticket(j)["prompt"]).read_text()).split("入力:\n```json\n")[1].split("\n```")[0]
+                (e.ticket(j) and Path(e.ticket(j)["prompt"]).read_text(encoding="utf-8"))
+                .split("入力:\n```json\n")[1]
+                .split("\n```")[0]
             ),
         )
         e.submit(j["id"], j["token"], r)

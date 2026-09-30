@@ -95,3 +95,9 @@ skill-evaluation-planで版・指標・方法・改善幅・正常と悪化検�
 入力・採点根拠・score・protocol_hashをJSON証跡へ残す。欠損を捏造しない。
 skill-assessで証跡を提出し、utility_supported / regression / inconclusiveを説明する。
 利用者には会話で計画・結果を説明し、JSON作成やコマンド入力を要求しない。
+
+## 再開・停止・出典の扱い
+
+完了済み研究には再開メニューのconfirmを提示し、diagnosticsの候補と残り予算を確認する。
+分岐では登録data_filesもコピーされる。停止条件はstop_policyで固定し、実装はrlk_stop.StopControllerを実際の更新へ接続する。
+出典はplan.referencesと各実験のreference_idsへ記録する。readは読んだ箇所・内容を残す申告であり、外部検証済みとは書かない。

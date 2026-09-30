@@ -67,7 +67,20 @@ SCHEMAS = {
                 "min_effect": 0.01,
                 "success_rule": "この差を採用する根拠",
                 "stop_rule": "計算予算以外の実験の終了条件",
+                "stop_policy": {"kind": "fixed_iterations", "max_iterations": 8},
+                "reference_ids": [],
                 "limitations": "交絡・標本数・実施条件の限界",
+            }
+        ],
+        "references": [
+            {
+                "id": "r1",
+                "source": "出典URLまたは書誌情報",
+                "claim": "支える主張",
+                "relevance": "この実験との関係",
+                "status": "unread",
+                "locator": "読んだ節・ページ",
+                "note": "読んだ内容と限界（readなら必須）",
             }
         ],
         "open_questions": [],
@@ -119,6 +132,23 @@ INSTRUCTIONS["implement"] += (
 )
 INSTRUCTIONS["review"] += (
     " status=partialは途中結果であり支持にしない。探索結果とconfirmationを区別し、探索の閾値到達を確立した知見として書かない。確認実験も指定条件での再確認であり、一般化や統計的有意差の保証ではない。"
+)
+
+INSTRUCTIONS["plan"] += (
+    " stop_policyで停止条件を固定する。fixed_iterationsはmax_iterationsのみ。convergenceは隣接観測差、"
+    "no_improvementは最良値からの改善幅で判定し、max_iterations/min_iterations/patience/toleranceを指定する。"
+    "no_improvementだけdirectionも必要。toleranceの単位と両条件への適用をmethodに記す。"
+    "referencesへ出典・対応主張・関連性・unread/readを記録し、実験のreference_idsで対応付ける。"
+    "readには実際に読んだ箇所locatorと要約noteが必須。読んでいない資料をreadにしない。"
+)
+INSTRUCTIONS["implement"] += (
+    " stop_policyがある場合、ランタイム同梱のfrom rlk_stop import StopControllerを使い"
+    "StopController.from_environment()で固定方針を読み、各更新の実測指標をstep(value)へ渡す。"
+    "Trueなら反復を終える。終了時にRLK_STOP_RECORDへ観測列が自動保存される。"
+    "両条件を同じ更新予算で比較するか、methodに記した固定対照を使う。rlk_stop.pyはfilesへ含めない。"
+)
+INSTRUCTIONS["implementation_review"] += (
+    " 停止判定の観測値が実際の更新指標につながり、両条件の予算が計画どおりかもコード・テストで確認する。"
 )
 
 PHASE_SKILLS = {

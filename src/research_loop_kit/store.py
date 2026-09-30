@@ -16,7 +16,7 @@ def digest(value):
 
 
 # DBに別行で持ち、stateの本文へは保存しない派生項目。
-DERIVED_KEYS = ("history", "jobs", "failed_attempts")
+DERIVED_KEYS = ("history", "jobs", "failed_attempts", "diagnostics")
 
 
 class Store:

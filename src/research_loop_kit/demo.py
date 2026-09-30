@@ -6,12 +6,13 @@ CODE = """import argparse
 import json
 from pathlib import Path
 from research.quadratic import compare
+from rlk_stop import StopController
 
 p = argparse.ArgumentParser()
 p.add_argument("--seed", type=int, required=True)
 p.add_argument("--output", required=True)
 a = p.parse_args()
-baseline, treatment = compare(a.seed, rate=RATE, steps=8)
+baseline, treatment = compare(a.seed, rate=RATE, steps=8, stop=StopController.from_environment())
 Path(a.output).write_text(json.dumps({"seed": a.seed, "baseline": baseline,
                                     "treatment": treatment}), encoding="utf-8")
 """
@@ -19,12 +20,14 @@ Path(a.output).write_text(json.dumps({"seed": a.seed, "baseline": baseline,
 SHARED_CODE = """import random
 
 
-def compare(seed, *, rate, steps):
+def compare(seed, *, rate, steps, stop=None):
     rng = random.Random(seed)
     x = rng.uniform(-5, 5)
     baseline = x * x
     for _ in range(steps):
         x -= rate * 2 * x
+        if stop is not None and stop.step(x * x):
+            break
     return baseline, x * x
 """
 
@@ -133,6 +136,7 @@ def respond(job, state):
                     "min_effect": 0.001,
                     "success_rule": "数値丸めより十分大きい差を確認する動作実証の閾値",
                     "stop_rule": "8更新で終了",
+                    "stop_policy": {"kind": "fixed_iterations", "max_iterations": 8},
                     "limitations": "解析解が既知の例",
                 }
                 for i, c in enumerate(payload["candidates"][: state["config"]["experiments_per_cycle"]])
@@ -141,8 +145,13 @@ def respond(job, state):
         }
     if kind == "implement":
         index = int(payload["experiment"]["id"][1:])
+        code = CODE.replace("RATE", str(0.05 * index))
+        if not payload["experiment"].get("stop_policy"):
+            code = code.replace("from rlk_stop import StopController\n", "").replace(
+                ", stop=StopController.from_environment()", ""
+            )
         return {
-            "files": {"experiment.py": CODE.replace("RATE", str(0.05 * index))},
+            "files": {"experiment.py": code},
             "shared_files": {} if _has_shared_code(payload) else {"research/quadratic.py": SHARED_CODE},
             "notes": "標準ライブラリだけで計算する動作実証実装",
         }

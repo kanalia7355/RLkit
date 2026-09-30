@@ -3,6 +3,7 @@
 from collections import defaultdict
 
 from .quality import claim_stage
+from .references import report_lines
 
 # 作業票や分岐元の記録へ渡す履歴から外す、大きく再計算可能な項目（全体はDBと証跡フォルダにある）。
 _HEAVY_RESULT_KEYS = ("values", "manifest")
@@ -70,6 +71,10 @@ def meeting_report(state, entry):
             ("stop_rule", "停止条件"),
         ):
             lines += [f"- {label}: {spec.get(key, '未記録')}"]
+        lines += [
+            f"- 構造化停止方針: {spec.get('stop_policy', '未登録（終了条件の自動検証なし）')}",
+            f"- 対応する資料ID: {spec.get('reference_ids', [])}",
+        ]
         lines += [f"- 実行seed: {r.get('manifest', {}).get('seeds', '未実行')}", ""]
     lines += [
         "## 結果",
@@ -110,6 +115,8 @@ def meeting_report(state, entry):
         "先行情報（ユーザー申告・外部資料の検証状態は別途確認）:",
         "",
         answers.get("prior_work", "未調査"),
+        "",
+        *report_lines(entry.get("proposal", {}).get("references", [])),
         "",
         f"- [サイクル報告](cycle-{entry['cycle']:03d}.md)",
         f"- [検証記録](cycle-{entry['cycle']:03d}-CHECKS.md)",

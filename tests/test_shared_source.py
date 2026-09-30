@@ -103,7 +103,7 @@ class SharedSourceTests(unittest.TestCase):
         first = hub.open()["session_id"]
         origin = hub.select(first, "new", name="元研究")
         original = hub_root / origin["path"] / "src/research/helper.py"
-        original.write_text("def metric(x):\n    return x * x\n", encoding="utf-8")
+        original.write_bytes(b"def metric(x):\n    return x * x\n")
         second = hub.open()["session_id"]
         branch = hub.select(second, "branch", project_id=origin["project_id"], name="別条件")
         copied = hub_root / branch["path"] / "src/research/helper.py"
