@@ -8,8 +8,8 @@ import sys
 
 from .cli import main as loop_main
 from .config import LoopError, dump, read_json
-from .sessions import Sessions
 from .importing import preview
+from .sessions import Sessions
 
 
 def hook(root, provider, payload):

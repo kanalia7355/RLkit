@@ -50,6 +50,38 @@ CLIの会話出力からJSONを推測して切り出さないため、各CLIの�
 PROMPTは仕事票を指す短い文章です。CLIにはその仕事票と応答先への読み書き権限が必要です。
 read-only設定のままなら応答ファイルが作れず失敗になります。権限の調整はCLI側で行います。
 
+### 権限確認をスキップして動かす前提
+
+外部CLI方式は、**人が承認ダイアログに答えない無人実行**です。各CLIは、Claude Codeの
+`--dangerously-skip-permissions` に相当する「ファイル書き込み・コマンド実行を確認なしで許可する」
+設定で起動することを前提にしています。既定の権限のままでは `response.json` の書き込みが
+承認待ちのまま拒否され、作業はタイムアウトまたは失敗として記録されます。
+
+自動承認のオプションは `agent_args`（役割ごとなら `roles.<役割>.agent_args`）で渡します。
+
+```json
+{
+  "roles": {
+    "ideas": {"backend": "claude", "agent_args": ["--dangerously-skip-permissions"]},
+    "review": {"backend": "gemini", "agent_args": ["--yolo"]}
+  }
+}
+```
+
+| backend | 自動承認の指定例 |
+|---|---|
+| claude | `--dangerously-skip-permissions`（または `--permission-mode bypassPermissions`） |
+| codex | 組み込み引数の `--sandbox workspace-write` で作業フォルダへの書き込みを許可 |
+| gemini | `--yolo` |
+| opencode | 設定ファイルの `permission` で編集・コマンド実行を許可 |
+
+オプション名はCLIの版で変わることがあるため、利用中の版の公式資料で確認してください。
+
+この設定では、AIが生成した指示やコードが利用者のOS権限で確認なしに実行されます。
+作業フォルダの分離はセキュリティ上のサンドボックスではありません。
+**信頼できる研究データ・Agentだけを使い、必要ならコンテナや専用ユーザー・VMの中で実行してください。**
+認証情報や他の研究を同じ環境に置かないことを推奨します。
+
 2026-09-11に確認した公式資料:
 
 - [Codex非対話実行](https://developers.openai.com/codex/noninteractive/)

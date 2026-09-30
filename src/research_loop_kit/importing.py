@@ -2,26 +2,19 @@
 
 import hashlib
 from pathlib import Path, PurePosixPath
-import stat
 
-from .config import LoopError, QUESTIONS, dump, nonempty
-from .store import digest, write_new
+from .config import QUESTIONS, LoopError, dump, nonempty
+from .fsutil import no_links, write_new
+from .store import digest
 
 MAX_FILES = 200
 MAX_BYTES = 100 * 1024 * 1024
 EXCLUDED = {".git", ".rlk", ".research", ".agents", ".claude", ".gemini", ".opencode", "__pycache__", ".venv", "node_modules", ".ssh", ".aws", ".azure", ".kube"}
 
 
-def no_links(path):
-    for part in (path, *path.parents):
-        info = part.lstat()
-        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
-            raise LoopError("リンク・ジャンクション経由の資料は取り込めません")
-
-
 def preview(source, paths):
-    root = Path(source).absolute()
-    no_links(root)
+    # 取り込み元フォルダ自体は利用者が選んだ場所。実パスへ解決し、配下のリンクだけを拒否する。
+    root = Path(source).resolve()
     if not root.is_dir():
         raise LoopError("取り込み元はフォルダを指定してください")
     if not paths or len(paths) > MAX_FILES or len(set(paths)) != len(paths):
@@ -37,8 +30,8 @@ def preview(source, paths):
         if set(relative.parts) & EXCLUDED or any(p.lower().startswith('.env') for p in relative.parts) or relative.suffix.lower() in (".pem", ".key"):
             raise LoopError(f"状態DB・Agent設定・認証情報は資料として取り込みません: {name}")
         path = root / name
-        no_links(path)
-        if not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
+        no_links(path, root)
+        if not path.is_file() or not path.resolve().is_relative_to(root):
             raise LoopError(f"通常ファイルを指定してください: {name}")
         size = path.stat().st_size
         total += size
@@ -55,7 +48,7 @@ def preview(source, paths):
         if read_bytes != size:
             raise LoopError("読み取り中に資料のサイズが変わりました。再確認してください")
         manifest.append({"path": name, "bytes": size, "sha256": sha.hexdigest()})
-    result = {"source": str(root.resolve()), "files": manifest, "total_bytes": total}
+    result = {"source": str(root), "files": manifest, "total_bytes": total}
     return dict(result, hash=digest(result))
 
 
@@ -75,7 +68,7 @@ def copy_snapshot(destination, inspection, context):
     source = Path(inspection["source"])
     for entry in inspection["files"]:
         path = source / entry["path"]
-        no_links(path)
+        no_links(path, source)
         with path.open("rb") as stream:
             data = stream.read(entry["bytes"] + 1)
         if len(data) != entry["bytes"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:

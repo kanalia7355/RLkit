@@ -11,8 +11,8 @@ from research_loop_kit.config import LoopError
 from research_loop_kit.demo import ANSWERS, respond
 from research_loop_kit.engine import Engine
 from research_loop_kit.guards import verify_evidence
-from research_loop_kit.setup import initialize
 from research_loop_kit.sessions import Sessions
+from research_loop_kit.setup import initialize
 
 
 class SharedSourceTests(unittest.TestCase):

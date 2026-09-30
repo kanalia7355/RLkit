@@ -18,3 +18,21 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 research_loop_kit = ["assets/*.md", "assets/skills/*/SKILL.md", "assets/skills/*/references/*.md"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["src/research_loop_kit/assets"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I"]
+# 長い日本語の文言は折り返さない。コードの行長はruff formatで揃える。
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# テストとagent.pyはclone直後に動くよう、importの前にsrcをsys.pathへ追加する。
+"tests/*" = ["E402"]
+"agent.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true

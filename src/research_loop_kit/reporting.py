@@ -2,6 +2,15 @@
 
 from collections import defaultdict
 
+# 作業票や分岐元の記録へ渡す履歴から外す、大きく再計算可能な項目（全体はDBと証跡フォルダにある）。
+_HEAVY_RESULT_KEYS = ("values", "manifest")
+
+
+def compact_history(history):
+    """作業票・分岐記録用の履歴。seed別の値と事前登録本文を除き、証跡パスで参照させる。"""
+    return [dict(entry, results=[{k: v for k, v in r.items() if k not in _HEAVY_RESULT_KEYS}
+                                 for r in entry["results"]]) for entry in history]
+
 
 def meeting_report(state, entry):
     answers = state["answers"]
@@ -24,10 +33,14 @@ def meeting_report(state, entry):
                            ("min_effect", "採用する改善幅"), ("success_rule", "判定根拠"), ("stop_rule", "停止条件")):
             lines += [f"- {label}: {spec.get(key, '未記録')}"]
         lines += [f"- 実行seed: {r.get('manifest', {}).get('seeds', '未実行')}", ""]
-    lines += ["## 結果", "", "| 実験 | 状態 | 対照平均 | 介入平均 | 改善幅平均 | n | 閾値到達 |",
-              "|---|---|---:|---:|---:|---:|---|"]
+    lines += ["## 結果", "", "95%区間は同一seedの差分に対するpaired bootstrapの参考値（有意差判定ではない）。", "",
+              "| 実験 | 状態 | 対照平均 | 介入平均 | 改善幅平均 | 改善幅95%区間 | n | 閾値到達 |",
+              "|---|---|---:|---:|---:|---:|---:|---|"]
     for r in entry["results"]:
-        lines += [f"| {r['id']} | {r['status']} | {r.get('baseline_mean', '—')} | {r.get('treatment_mean', '—')} | {r.get('effect_mean', '—')} | {r.get('n', 0)} | {r['threshold_met']} |"]
+        ci = r.get("effect_ci95")
+        ci_text = f"[{ci[0]:.6g}, {ci[1]:.6g}]" if ci else "—"
+        lines += [f"| {r['id']} | {r['status']} | {r.get('baseline_mean', '—')} | {r.get('treatment_mean', '—')}"
+                  f" | {r.get('effect_mean', '—')} | {ci_text} | {r.get('n', 0)} | {r['threshold_met']} |"]
     for r in entry["results"]:
         if r.get("error"):
             lines += ["", f"失敗記録 {r['id']}: {r['error']}", ""]

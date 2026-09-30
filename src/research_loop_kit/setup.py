@@ -4,7 +4,8 @@ from importlib.resources import files
 from pathlib import Path
 
 from .config import LoopError, make_config
-from .store import Store, write_new
+from .fsutil import write_new
+from .store import Store
 
 
 def initialize(root, overrides=None):

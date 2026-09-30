@@ -1,5 +1,7 @@
 """認証不要の動作実証用。AIによる推論を代替したとは扱わない。"""
 
+import hashlib
+
 CODE = '''import argparse
 import json
 from pathlib import Path
@@ -33,6 +35,14 @@ ANSWERS = {
     "evaluation": "更新前と8回更新後の二乗誤差", "resources": "CPU、外部サービス不要",
     "constraints": "動作実証値を実研究の知見として使わない", "deliverable": "動作実証レポート",
 }
+
+
+def _has_shared_code(payload):
+    """共通srcにこの版の関数が既にあるか。payloadはハッシュ一覧（旧版は全文）。"""
+    if "shared_source_files" in payload:
+        expected = hashlib.sha256(SHARED_CODE.encode("utf-8")).hexdigest()
+        return payload["shared_source_files"].get("research/quadratic.py") == expected
+    return payload.get("shared_sources", {}).get("research/quadratic.py") == SHARED_CODE
 
 
 def respond(job, state):
@@ -77,7 +87,7 @@ def respond(job, state):
     if kind == "implement":
         index = int(payload["experiment"]["id"][1:])
         return {"files": {"experiment.py": CODE.replace("RATE", str(0.05 * index))},
-                "shared_files": {} if payload.get("shared_sources", {}).get("research/quadratic.py") == SHARED_CODE else {"research/quadratic.py": SHARED_CODE},
+                "shared_files": {} if _has_shared_code(payload) else {"research/quadratic.py": SHARED_CODE},
                 "notes": "標準ライブラリだけで計算する動作実証実装"}
     if kind == "review":
         return {"experiments": [{"id": x["id"], "assessment": "supported" if x.get("threshold_met") else "inconclusive",

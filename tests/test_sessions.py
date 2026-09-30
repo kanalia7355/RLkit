@@ -1,7 +1,5 @@
 """cloneの自動入口から、再セッションと研究分岐までを検証する。"""
 
-import contextlib
-import io
 import json
 from pathlib import Path
 import shutil

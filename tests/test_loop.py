@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 import copy
 import json
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -18,7 +17,6 @@ from research_loop_kit.demo import ANSWERS, respond
 from research_loop_kit.engine import Engine
 from research_loop_kit.providers import command, process_run
 from research_loop_kit.setup import initialize
-from research_loop_kit.store import digest
 
 
 class LoopTests(unittest.TestCase):

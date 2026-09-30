@@ -7,8 +7,9 @@ import re
 import sys
 
 from .config import LoopError, dump, nonempty, strings
+from .fsutil import write_new
 from .providers import process_run
-from .store import digest, write_new
+from .store import digest
 
 KINDS = ("skill_design", "skill_build")
 PHASES = ("deepen", "ideas", "plan", "implement", "review")

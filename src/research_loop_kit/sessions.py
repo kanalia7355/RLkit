@@ -3,16 +3,25 @@
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import shutil
 import sqlite3
 import time
 import uuid
 
-from .config import LoopError, QUESTIONS, dump, make_config, nonempty
+from .config import QUESTIONS, LoopError, dump, make_config, nonempty
 from .engine import Engine
+from .fsutil import no_links, write_atomic
+from .importing import copy_snapshot, preview, validate_context
+from .reporting import compact_history
 from .setup import initialize
-from .store import digest
-from .importing import preview, validate_context, copy_snapshot, no_links
 from .shared_source import read_sources
+from .store import digest
+
+# 入口セッションの記録は選択の監査用。古いものは件数・期間で整理する。
+SESSION_KEEP = 200
+SESSION_MAX_AGE_SECONDS = 30 * 24 * 3600
+# これより古いstagingは中断された取り込みの残骸として削除する。
+STAGING_MAX_AGE_SECONDS = 24 * 3600
 
 
 ACTIONS = {
@@ -144,9 +153,23 @@ class Sessions:
         menu = self.menu()
         session = {"id": uuid.uuid4().hex, "status": "awaiting_choice", "selection": None,
                    "snapshots": {p["id"]: p["fingerprint"] for p in menu["projects"]}}
+        now = time.time()
         with self.db(create=True) as db:
-            db.execute("INSERT INTO sessions VALUES (?,?,?)", (session["id"], time.time(), dump(session)))
+            db.execute("INSERT INTO sessions VALUES (?,?,?)", (session["id"], now, dump(session)))
+            db.execute("DELETE FROM sessions WHERE created < ? AND id NOT IN "
+                       "(SELECT id FROM sessions ORDER BY created DESC LIMIT ?)",
+                       (now - SESSION_MAX_AGE_SECONDS, SESSION_KEEP))
+        self._remove_stale_staging(now)
         return dict(menu, session_id=session["id"])
+
+    def _remove_stale_staging(self, now):
+        staging = self.home / "import-staging"
+        if not staging.is_dir() or staging.is_symlink():
+            return
+        for directory in staging.iterdir():
+            if (directory.is_dir() and not directory.is_symlink() and directory.name.startswith("study-")
+                    and now - directory.stat().st_mtime > STAGING_MAX_AGE_SECONDS):
+                shutil.rmtree(directory, ignore_errors=True)
 
     def import_study(self, session_id, source, paths, expected_hash, name, context, settings=None):
         nonempty(name, "取り込み後の研究名")
@@ -161,25 +184,17 @@ class Sessions:
                 raise LoopError("新しいセッションで取り込みを選んでください")
             for parent in (self.home, self.home / "import-staging", self.home / "projects"):
                 parent.mkdir(parents=True, exist_ok=True)
-                no_links(parent)
+                no_links(parent, self.root)
             identifier = "study-" + uuid.uuid4().hex[:12]
             staging = self.home / "import-staging" / identifier
             destination = self.home / "projects" / identifier
-            initialize(staging, config)
-            copy_snapshot(staging, inspection, context)
-            engine = Engine(staging)
-            with engine.store.transaction() as research_db:
-                state = engine.store.state(research_db)
-                state["answers"] = context["answers"]
-                state["imported_research"] = {"summary": context["summary"], "source": inspection["source"],
-                    "manifest": "imports/MANIFEST.json", "context": "imports/CONTEXT.md", "hash": inspection["hash"],
-                    "files": [dict(f, snapshot="imports/source/" + f["path"]) for f in inspection["files"]],
-                    "verification": "未再実行・過去資料として取り込み"}
-                engine.store.save(research_db, state)
-                engine.store.event(research_db, "research_imported", state["imported_research"])
-            # 資料コピー完了前の研究を通常の研究一覧へ公開しない。
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            staging.rename(destination)
+            try:
+                self._build_import(staging, config, inspection, context)
+                # 資料コピー完了前の研究を通常の研究一覧へ公開しない。
+                staging.rename(destination)
+            except BaseException:
+                shutil.rmtree(staging, ignore_errors=True)
+                raise
             path = destination.relative_to(self.root).as_posix()
             selection = {"action": "import", "project_id": digest(path)[:16], "path": path, "mode": "work"}
             session.update(status="selected", selection=selection)
@@ -188,104 +203,135 @@ class Sessions:
         return dict(selection, session_id=session_id, next_step="取り込み内容と未回答項目を確認し、次の実験方針を提案する。既存コードは自動実行しない。")
 
     @staticmethod
+    def _build_import(staging, config, inspection, context):
+        initialize(staging, config)
+        copy_snapshot(staging, inspection, context)
+        engine = Engine(staging)
+        with engine.store.transaction() as research_db:
+            state = engine.store.state(research_db)
+            state["answers"] = context["answers"]
+            state["imported_research"] = {
+                "summary": context["summary"], "source": inspection["source"],
+                "manifest": "imports/MANIFEST.json", "context": "imports/CONTEXT.md", "hash": inspection["hash"],
+                "files": [dict(f, snapshot="imports/source/" + f["path"]) for f in inspection["files"]],
+                "verification": "未再実行・過去資料として取り込み"}
+            engine.store.save(research_db, state)
+            engine.store.event(research_db, "research_imported", state["imported_research"])
+
+    @staticmethod
     def _read(db, session_id):
         row = db.execute("SELECT body FROM sessions WHERE id=?", (session_id,)).fetchone()
         if not row:
             raise LoopError("不明なセッションです。入口を開き直してください")
         return json.loads(row[0])
 
-    def select(self, session_id, action, project_id=None, name=None, settings=None, feedback="", candidate_ids=None, plan_job=None):
+    def select(self, session_id, action, project_id=None, name=None, settings=None, feedback="",
+               candidate_ids=None, plan_job=None):
         if action not in ACTIONS:
             raise LoopError("選択肢が不明です")
         settings = settings or {}
         if not isinstance(settings, dict):
             raise LoopError("設定変更はJSONオブジェクトが必要です")
-        if action in ("continue", "review", "improve") and (settings or feedback or candidate_ids or plan_job is not None):
+        if action in ("continue", "review", "improve") and (settings or feedback or candidate_ids
+                                                            or plan_job is not None):
             raise LoopError("設定・候補・方針を変更する場合は分岐を選択してください")
         with self.db() as db:
             session = self._read(db, session_id)
             if session["status"] != "awaiting_choice":
                 raise LoopError("このセッションでは選択済みです。別の進め方を選ぶには入口を開き直してください")
-            source = None
-            if action != "new":
-                source = next((e for e in self.catalog() if e["id"] == project_id), None)
-                if not source or session["snapshots"].get(project_id) != source["fingerprint"]:
-                    raise LoopError("表示後に研究状態が変わりました。最新の入口を開いて選び直してください")
-                if action == "continue" and can_continue(source["state"]):
-                    raise LoopError(can_continue(source["state"]))
+            source = None if action == "new" else self._selected_source(session, project_id, action)
             if action in ("new", "branch", "revise", "reselect"):
-                nonempty(name, "新しい研究の名前")
-                cfg = dict(source["state"]["config"]) if source else {}
-                cfg.update(settings)
-                cfg["name"] = name
-                selected = []
-                old_plan = None
-                if source:
-                    old_plan = source["state"].get("proposal")
-                    plan_jobs = [j for j in source["state"]["jobs"] if j["kind"] == "plan" and j["status"] == "done"]
-                    if plan_job is not None:
-                        match = next((j for j in plan_jobs if j["id"] == plan_job), None)
-                        if not match:
-                            raise LoopError("選択した方針版がありません")
-                        old_plan = match["result"]
-                    elif not old_plan and plan_jobs:
-                        old_plan = plan_jobs[-1]["result"]
-                if action == "reselect":
-                    if not candidate_ids or len(set(candidate_ids)) != len(candidate_ids):
-                        raise LoopError("重複しない候補IDを指定してください")
-                    by_id = {c["id"]: c for c in source["state"].get("candidates", [])}
-                    if set(candidate_ids) - set(by_id):
-                        raise LoopError("保存済み候補にないIDです")
-                    selected = [by_id[cid] for cid in candidate_ids]
-                    cfg["experiments_per_cycle"] = len(selected)
-                elif action == "revise":
-                    nonempty(feedback, "修正したい内容")
-                    if not old_plan:
-                        raise LoopError("修正する方針がありません")
-                    # 方針を作った時点の候補を参照し、別サイクルの同名IDと混同しない。
-                    source_job = next((j for j in reversed(source["state"]["jobs"])
-                                       if j["kind"] == "plan" and j["result"] == old_plan), None)
-                    selected = source_job["payload"]["candidates"] if source_job else []
-                    if not selected or cfg["experiments_per_cycle"] > len(selected):
-                        raise LoopError("元の候補数を超える変更はbranchで候補から生成してください")
-                cfg = make_config(cfg)
-                directory = self.home / "projects" / ("study-" + uuid.uuid4().hex[:12])
-                initialize(directory, cfg)
-                engine = Engine(directory)
-                if source:
-                    shared = read_sources(self.root / source["path"])
-                    for relative, content in shared.items():
-                        target = directory / "src" / relative
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_text(content, encoding="utf-8")
-                    with engine.store.transaction() as research_db:
-                        state = engine.store.state(research_db)
-                        state["answers"] = {k: v for k, v in source["state"]["answers"].items()
-                                            if action != "branch" or k in QUESTIONS}
-                        state["prior_research"] = {"path": source["path"], "fingerprint": source["fingerprint"],
-                                                   "action": action, "feedback": feedback, "proposal": old_plan,
-                                                   "answers": source["state"]["answers"],
-                                                   "deepening": source["state"].get("deepening"),
-                                                   "history": source["state"]["history"]}
-                        state["prior_research"]["shared_source_hash"] = digest(shared)
-                        if source["state"].get("imported_research"):
-                            state["prior_research"]["imported_research"] = source["state"]["imported_research"]
-                        if action in ("revise", "reselect"):
-                            state.update(phase="planning", cycle=1, candidates=selected,
-                                         deepening=source["state"].get("deepening"))
-                            engine.store.job(research_db, 1, "plan", {"candidates": selected, "previous_proposal": old_plan,
-                                                                     "feedback": feedback, "user_selected_candidate_ids": candidate_ids})
-                        engine.store.event(research_db, "branched", {"source": source["path"], "action": action})
-                        engine.store.save(research_db, state)
-                path = directory.relative_to(self.root).as_posix()
+                path = self._create_study(action, source, name, settings, feedback, candidate_ids, plan_job)
                 target_id = digest(path)[:16]
             else:
                 path, target_id = source["path"], source["id"]
-            selection = {"action": action, "project_id": target_id, "path": path,
-                         "mode": "read_only" if action == "review" else "skills" if action == "improve" else "work"}
+            mode = {"review": "read_only", "improve": "skills"}.get(action, "work")
+            selection = {"action": action, "project_id": target_id, "path": path, "mode": mode}
             session.update(status="selected", selection=selection)
             db.execute("UPDATE sessions SET body=? WHERE id=?", (dump(session), session_id))
-            return dict(selection, session_id=session_id, next_step="状態を確認し、保存済みの段階から会話を進める。新しい計画は改めて提示する。")
+            return dict(selection, session_id=session_id,
+                        next_step="状態を確認し、保存済みの段階から会話を進める。新しい計画は改めて提示する。")
+
+    def _selected_source(self, session, project_id, action):
+        source = next((e for e in self.catalog() if e["id"] == project_id), None)
+        if not source or session["snapshots"].get(project_id) != source["fingerprint"]:
+            raise LoopError("表示後に研究状態が変わりました。最新の入口を開いて選び直してください")
+        if action == "continue" and can_continue(source["state"]):
+            raise LoopError(can_continue(source["state"]))
+        return source
+
+    @staticmethod
+    def _base_plan(source, plan_job):
+        """分岐元の方針。版の指定がなければ現在の方針、なければ最後に作られた方針。"""
+        if not source:
+            return None
+        plan_jobs = [j for j in source["state"]["jobs"] if j["kind"] == "plan" and j["status"] == "done"]
+        if plan_job is not None:
+            match = next((j for j in plan_jobs if j["id"] == plan_job), None)
+            if not match:
+                raise LoopError("選択した方針版がありません")
+            return match["result"]
+        return source["state"].get("proposal") or (plan_jobs[-1]["result"] if plan_jobs else None)
+
+    @staticmethod
+    def _chosen_candidates(action, source, old_plan, cfg, feedback, candidate_ids):
+        if action == "reselect":
+            if not candidate_ids or len(set(candidate_ids)) != len(candidate_ids):
+                raise LoopError("重複しない候補IDを指定してください")
+            by_id = {c["id"]: c for c in source["state"].get("candidates", [])}
+            if set(candidate_ids) - set(by_id):
+                raise LoopError("保存済み候補にないIDです")
+            cfg["experiments_per_cycle"] = len(candidate_ids)
+            return [by_id[cid] for cid in candidate_ids]
+        if action == "revise":
+            nonempty(feedback, "修正したい内容")
+            if not old_plan:
+                raise LoopError("修正する方針がありません")
+            # 方針を作った時点の候補を参照し、別サイクルの同名IDと混同しない。
+            source_job = next((j for j in reversed(source["state"]["jobs"])
+                               if j["kind"] == "plan" and j["result"] == old_plan), None)
+            selected = source_job["payload"]["candidates"] if source_job else []
+            if not selected or cfg["experiments_per_cycle"] > len(selected):
+                raise LoopError("元の候補数を超える変更はbranchで候補から生成してください")
+            return selected
+        return []
+
+    def _create_study(self, action, source, name, settings, feedback, candidate_ids, plan_job):
+        """新しい研究フォルダを作り、分岐元があれば関心・共通src・方針を引き継ぐ。"""
+        nonempty(name, "新しい研究の名前")
+        cfg = dict(source["state"]["config"]) if source else {}
+        cfg.update(settings, name=name)
+        old_plan = self._base_plan(source, plan_job)
+        selected = self._chosen_candidates(action, source, old_plan, cfg, feedback, candidate_ids)
+        cfg = make_config(cfg)
+        directory = self.home / "projects" / ("study-" + uuid.uuid4().hex[:12])
+        initialize(directory, cfg)
+        if source:
+            self._inherit(Engine(directory), source, action, feedback, old_plan, selected, candidate_ids)
+        return directory.relative_to(self.root).as_posix()
+
+    def _inherit(self, engine, source, action, feedback, old_plan, selected, candidate_ids):
+        shared = read_sources(self.root / source["path"])
+        for relative, content in shared.items():
+            write_atomic(engine.root / "src" / relative, content)
+        previous = source["state"]
+        with engine.store.transaction() as research_db:
+            state = engine.store.state(research_db)
+            state["answers"] = {k: v for k, v in previous["answers"].items() if action != "branch" or k in QUESTIONS}
+            state["prior_research"] = {
+                "path": source["path"], "fingerprint": source["fingerprint"], "action": action,
+                "feedback": feedback, "proposal": old_plan, "answers": previous["answers"],
+                "deepening": previous.get("deepening"), "history": compact_history(previous["history"]),
+                "shared_source_hash": digest(shared)}
+            if previous.get("imported_research"):
+                state["prior_research"]["imported_research"] = previous["imported_research"]
+            if action in ("revise", "reselect"):
+                state.update(phase="planning", cycle=1, candidates=selected, deepening=previous.get("deepening"))
+                engine.store.job(research_db, 1, "plan", {
+                    "candidates": selected, "previous_proposal": old_plan, "feedback": feedback,
+                    "user_selected_candidate_ids": candidate_ids})
+            engine.store.event(research_db, "branched", {"source": source["path"], "action": action})
+            engine.store.save(research_db, state)
 
     def target(self, session_id, command):
         with self.db() as db:

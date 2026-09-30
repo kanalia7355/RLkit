@@ -1,12 +1,19 @@
-"""研究共通srcの蓄積と、実験ごとのコード版固定。"""
+"""研究共通srcの蓄積と、実験ごとのコード版固定。
+
+共通srcの全文はジョブのpayloadや結果へ埋め込まず、内容アドレスの版フォルダ
+`.rlk/source-versions/<hash>/src/` に一度だけ保存し、DBにはハッシュだけを残す。
+"""
 
 import ast
-from pathlib import Path
+import hashlib
 import re
 
 from .config import LoopError, dump
-from .importing import no_links
-from .store import digest, write_new
+from .fsutil import no_links, write_atomic, write_new
+from .store import digest
+
+VERSIONS = ".rlk/source-versions"
+_NAME = re.compile(r"(?:[a-zA-Z_][a-zA-Z0-9_]*/)*[a-zA-Z_][a-zA-Z0-9_]*\.py")
 
 
 def validate_sources(sources):
@@ -16,7 +23,7 @@ def validate_sources(sources):
         raise LoopError("共通ソースは文字列、合計200万文字以内です")
     names = set()
     for name, code in sources.items():
-        if not isinstance(name, str) or not re.fullmatch(r"(?:[a-zA-Z_][a-zA-Z0-9_]*/)*[a-zA-Z_][a-zA-Z0-9_]*\.py", name):
+        if not isinstance(name, str) or not _NAME.fullmatch(name):
             raise LoopError("共通ソースはsrcからの相対Pythonパスを指定してください")
         if name.lower() in names:
             raise LoopError("大文字小文字だけが異なる共通ソースは使えません")
@@ -27,23 +34,73 @@ def validate_sources(sources):
             raise LoopError(f"共通ソースの構文エラー: {exc}") from exc
 
 
+def text_hash(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def file_hashes(sources):
+    return {name: text_hash(code) for name, code in sources.items()}
+
+
+def read_code(directory, base=None):
+    """directory配下の.pyを読む。baseまでの途中のリンクを拒否する。"""
+    base = directory if base is None else base
+    result = {}
+    for path in sorted(directory.rglob("*.py")):
+        no_links(path, base)
+        result[path.relative_to(directory).as_posix()] = path.read_text(encoding="utf-8")
+    return result
+
+
 def read_sources(root):
     directory = root / "src"
     if not directory.exists():
         return {}
-    no_links(directory)
-    sources = {}
-    for path in sorted(directory.rglob("*.py")):
-        no_links(path)
-        if not path.resolve().is_relative_to(directory.resolve()):
-            raise LoopError("共通ソースの外部参照は禁止です")
-        sources[path.relative_to(directory).as_posix()] = path.read_text(encoding="utf-8")
+    no_links(directory, root)
+    sources = read_code(directory, root)
     validate_sources(sources)
     return sources
 
 
+def save_same(path, text, base):
+    if path.exists():
+        no_links(path, base)
+        if path.read_text(encoding="utf-8") != text:
+            raise LoopError(f"既存の実験記録と内容が異なります: {path}")
+    else:
+        write_new(path, text)
+
+
+def store_version(root, sources):
+    """共通srcの版を内容アドレスで保存する。同じ版の再保存は内容一致を確認するだけ。"""
+    version = digest(sources)
+    for name, code in sources.items():
+        save_same(root / VERSIONS / version / "src" / name, code, root)
+    return version
+
+
+def load_version(root, version):
+    directory = root / VERSIONS / version / "src"
+    sources = read_code(directory, root) if directory.exists() else {}
+    if digest(sources) != version:
+        raise LoopError(f"共通srcの保存版が変更または欠損しています: {version}")
+    return sources
+
+
+def base_sources(root, payload):
+    """実装ジョブ作成時の共通src。旧版のpayload（全文埋め込み）も読める。"""
+    if "shared_source_hash" in payload:
+        return load_version(root, payload["shared_source_hash"])
+    return payload.get("shared_sources", {})
+
+
+def experiment_folder(job):
+    return f"experiments/cycle-{job['cycle']:03d}/{job['payload']['experiment']['id']}"
+
+
 def prepare(root, job, result):
-    base = job["payload"].get("shared_sources", {})
+    """書き込みを伴わない検証。実行版のsnapshotを返し、resultへハッシュと保存先を記録する。"""
+    base = base_sources(root, job["payload"])
     changes = result.get("shared_files", {})
     validate_sources(changes)
     snapshot = dict(base, **changes)
@@ -53,49 +110,40 @@ def prepare(root, job, result):
     for name, code in changes.items():
         if current.get(name) not in (base.get(name), code):
             raise LoopError(f"共通ソースの並列変更が競合しました: {name}。最新srcを確認して別モジュール名に分けてください")
-    result["shared_snapshot"] = snapshot
+    result.pop("shared_snapshot", None)
     result["shared_source_hash"] = digest(snapshot)
-
-
-def save_same(path, text):
-    if path.exists():
-        no_links(path)
-        if path.read_text(encoding="utf-8") != text:
-            raise LoopError(f"既存の実験記録と内容が異なります: {path}")
-    else:
-        write_new(path, text)
+    result["shared_source_files"] = file_hashes(snapshot)
+    result["experiment_path"] = experiment_folder(job)
+    return snapshot
 
 
 def publish(root, job, result):
-    """DBの実装受理トランザクション内。競合を再確認してから保存する。"""
-    prepare(root, job, result)
-    # 実行する内容はこの版。root/srcは以降の実装に使う作業用ソース。
-    version = root / ".rlk/source-versions" / result["shared_source_hash"]
-    for name, code in result["shared_snapshot"].items():
-        save_same(version / "src" / name, code)
+    """実装受理トランザクションの最後（DB更新の後、commitの前）に呼ぶ。
+
+    版フォルダと実験フォルダは内容アドレス・追記のみで、巻き戻っても無害。
+    作業用のroot/srcだけは上書きなので、一時ファイルからの置換で途中状態を残さない。
+    """
+    snapshot = prepare(root, job, result)
+    version = store_version(root, snapshot)
     for name, code in result.get("shared_files", {}).items():
         path = root / "src" / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        no_links(path.parent)
+        no_links(path.parent, root)
         if path.exists():
-            no_links(path)
-        path.write_text(code, encoding="utf-8")
-    folder = root / "experiments" / f"cycle-{job['cycle']:03d}" / job["payload"]["experiment"]["id"]
+            no_links(path, root)
+        write_atomic(path, code)
+    folder = root / result["experiment_path"]
     for name, code in result["files"].items():
-        save_same(folder / name, code)
-    save_same(folder / "experiment.json", dump({"experiment": job["payload"]["experiment"],
-              "proposal_hash": job["payload"]["proposal_hash"], "shared_source_hash": result["shared_source_hash"],
-              "source_version": version.relative_to(root).as_posix()}) + "\n")
-    result["experiment_path"] = folder.relative_to(root).as_posix()
+        save_same(folder / name, code, root)
+    record = {"experiment": job["payload"]["experiment"], "proposal_hash": job["payload"]["proposal_hash"],
+              "shared_source_hash": version, "source_version": f"{VERSIONS}/{version}"}
+    save_same(folder / "experiment.json", dump(record) + "\n", root)
 
 
-def code_files(implementation):
-    return dict(implementation["files"], **{"src/" + p: text for p, text in implementation.get("shared_snapshot", {}).items()})
-
-
-def read_code(directory):
-    result = {}
-    for path in directory.rglob("*.py"):
-        no_links(path)
-        result[path.relative_to(directory).as_posix()] = path.read_text(encoding="utf-8")
-    return result
+def code_files(root, implementation):
+    """実行するコード一式。旧版の結果（shared_snapshot埋め込み）も読める。"""
+    if "shared_snapshot" in implementation:
+        shared = implementation["shared_snapshot"]
+    else:
+        shared = load_version(root, implementation["shared_source_hash"])
+    return dict(implementation["files"], **{"src/" + p: text for p, text in shared.items()})

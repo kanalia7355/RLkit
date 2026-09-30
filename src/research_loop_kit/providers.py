@@ -5,7 +5,6 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
-import sys
 
 from .config import LoopError, read_json
 

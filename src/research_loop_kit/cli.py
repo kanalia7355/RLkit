@@ -1,15 +1,13 @@
 """日本語の対話と、Agentから呼べるJSONインタフェース。"""
 
 import argparse
-import json
-from pathlib import Path
 import shutil
 import sys
 
 from .config import BACKENDS, LoopError, dump, read_json
 from .engine import Engine
-from .setup import initialize
 from .evolution import KINDS
+from .setup import initialize
 
 
 def parser():

@@ -1,6 +1,5 @@
 """既存研究の取り込みをセッション入口と実験ループから検証する。"""
 
-import hashlib
 import contextlib
 import io
 import json
@@ -12,12 +11,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from research_loop_kit.agent_entry import main as agent_main
 from research_loop_kit.config import LoopError
 from research_loop_kit.demo import ANSWERS
 from research_loop_kit.engine import Engine
 from research_loop_kit.importing import preview
 from research_loop_kit.sessions import Sessions
-from research_loop_kit.agent_entry import main as agent_main
 
 
 class ImportTests(unittest.TestCase):
@@ -126,7 +125,36 @@ class ImportTests(unittest.TestCase):
                 '--hash', inspection['hash'], '--name', '既存研究', '--context', str(context)])
         self.assertEqual(code, 0)
         selected = json.loads(output.getvalue())
-        self.assertEqual(self.hub.target(self.session, 'status'), self.clone / selected['path'])
+        self.assertEqual(self.hub.target(self.session, 'status'), self.clone.resolve() / selected['path'])
+
+    def test_symlinked_ancestor_is_allowed_but_links_inside_source_are_rejected(self):
+        # macOSの/var -> /private/varや~/Dropboxのように、取り込み元の親がリンクでも取り込める。
+        linked_parent = self.base / "linked"
+        try:
+            linked_parent.symlink_to(self.base, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinkを作成できない環境")
+        via_link = linked_parent / "existing"
+        inspection = preview(via_link, self.paths)
+        self.assertEqual(inspection["source"], str(self.source.resolve()))
+        selection = self.hub.import_study(self.session, via_link, self.paths, inspection["hash"], "リンク経由", self.context)
+        self.assertTrue((self.clone / selection["path"] / "imports/source/report.md").is_file())
+        # 取り込み元の内側にあるリンクは、外部のファイルを持ち込めるため拒否する。
+        outside = self.base / "outside.txt"
+        outside.write_text("secret", encoding="utf-8")
+        (self.source / "inner").mkdir()
+        (self.source / "inner" / "link.txt").symlink_to(outside)
+        (self.source / "linkdir").symlink_to(self.base, target_is_directory=True)
+        for path in ("inner/link.txt", "linkdir/outside.txt"):
+            with self.subTest(path=path), self.assertRaisesRegex(LoopError, "リンク"):
+                preview(self.source, [path])
+
+    def test_failed_import_removes_staging(self):
+        with patch("research_loop_kit.sessions.copy_snapshot", side_effect=OSError("コピー中断")):
+            with self.assertRaises(OSError):
+                self.import_study()
+        staging = self.clone / ".research/import-staging"
+        self.assertEqual(list(staging.iterdir()) if staging.exists() else [], [])
 
 
 if __name__ == "__main__":

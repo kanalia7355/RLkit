@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from research_loop_kit.config import LoopError
 from research_loop_kit.demo import ANSWERS, respond
 from research_loop_kit.engine import Engine
-from research_loop_kit.evolution import validate_design, validate_build
+from research_loop_kit.evolution import validate_build, validate_design
 from research_loop_kit.prompts import render
 from research_loop_kit.sessions import Sessions
 from research_loop_kit.setup import initialize
