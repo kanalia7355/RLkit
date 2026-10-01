@@ -96,7 +96,12 @@ class FollowupTests(unittest.TestCase):
     def test_review_runs_after_wall_time_is_exhausted(self):
         engine = self.accepted()
         self.until_review(engine)
-        edit_state(self.root, lambda s: s.update(started=time.time() - s["config"]["max_wall_seconds"] - 1))
+        edit_state(
+            self.root,
+            lambda s: s.update(
+                config=dict(s["config"], max_wall_seconds=10, wall_time_basis="elapsed"), started=time.time() - 11
+            ),
+        )
         self.finish_review(engine)
         state = engine.status()
         self.assertEqual(state["phase"], "complete")

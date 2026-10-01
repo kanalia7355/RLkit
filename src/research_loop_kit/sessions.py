@@ -9,6 +9,7 @@ import time
 import uuid
 
 from . import references
+from .budget import remaining_seconds
 from .config import QUESTIONS, LoopError, dump, make_config, nonempty
 from .engine import Engine
 from .fsutil import no_links, write_atomic
@@ -41,7 +42,7 @@ ACTIONS = {
 def can_continue(state):
     if state["phase"] == "complete":
         return "完了済みです。追加の実験は分岐して始められます"
-    if state["started"] and time.time() - state["started"] >= state["config"]["max_wall_seconds"]:
+    if remaining_seconds(state) <= 0:
         return "前回の時間予算が終了しています。結果を見るか、分岐してください"
     return None
 
@@ -90,7 +91,14 @@ class Sessions:
                     continue
                 relative = directory.relative_to(self.root).as_posix()
                 entries.append(
-                    {"id": digest(relative)[:16], "path": relative, "state": state, "fingerprint": digest(state)}
+                    {
+                        "id": digest(relative)[:16],
+                        "path": relative,
+                        "state": state,
+                        "fingerprint": digest(
+                            {k: v for k, v in state.items() if k not in ("diagnostics", "active_seconds")}
+                        ),
+                    }
                 )
         return entries
 
@@ -109,9 +117,7 @@ class Sessions:
         projects = []
         for entry in self.catalog():
             state = entry["state"]
-            remaining = state["config"]["max_wall_seconds"]
-            if state["started"]:
-                remaining = max(0, int(remaining - (time.time() - state["started"])))
+            remaining = None if state["config"]["max_wall_seconds"] is None else int(remaining_seconds(state))
             proposals = []
             for job in state["jobs"]:
                 if job["kind"] == "plan" and job["status"] == "done":

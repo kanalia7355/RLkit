@@ -1,6 +1,8 @@
 # Active方式の受け入れ検証
 
-実施日: 2026-09-30 / Python 3.12 / Linux
+対象: v0.8（PR #6） / 実施日: 2026-09-30 / Python 3.12 / Linux
+
+開発者向けの固定回答受入試験。PJ方針は[PROJECT_POLICY.md](PROJECT_POLICY.md)、現行の検証範囲は[VALIDATION.md](VALIDATION.md)を参照する。
 
 この開発セッションのAgentが数値積分とCSV回帰の計画・実装・検証回答を作成し、backend=activeで作業票を取得してsubmitした。
 深掘り、候補、方針、承認、実装、別作業の実行前レビュー、実験、結果レビュー、未使用seedでの確認までを通した。

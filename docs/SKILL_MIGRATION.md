@@ -1,6 +1,6 @@
-# lab_exスキルの移植対応 — v0.4
+# 元システムのスキル目的と現行対応
 
-v0.4ではresearch-report（報告会用Markdown）とauto-skill-pipeline（設計承認後の実装・検証・反映）を追加し、計18スキルです。
+移植履歴として、v0.4ではresearch-report（報告会用Markdown）とauto-skill-pipeline（設計承認後の実装・検証・反映）を追加し、計18スキルです。
 両スキルのreferences本文も配布・研究初期化・作業票読込へ接続しています。詳細はSKILL_EVOLUTION.md。
 以下のv0.3の12スキル一覧はその適応範囲を引き続き示します。
 
@@ -27,7 +27,7 @@ v0.3では下記12スキルの観点を分野非依存に書き直し、同梱�
 | experiment-cluster-map | ideas作業票、CLUSTERS.mdを採用方針の完全一致で分類 | 意味的クラスタリングなし。元の固定GA分類は使わない |
 | skill-candidate-detector | review作業票、反復知見・単発知見・ジョブエラーを記録し、毎サイクル最大1件を設計へ接続 | 設計承認後だけ実装・反映。元の全キーワード検出は未移植 |
 | experiment-review-panel | review作業票で数値・機序・対照/統計の三観点を適用 | 同一Agentのレビュー。独立3AgentやR4による合議は未実装 |
-| seed-power-advisor | plan/review作業票で実験単位・対応関係・必要差と標本数を確認 | 助言のみ。検出力計算・検定未実装。非対応検定の式を流用しない |
+| seed-power-advisor | plan/review作業票で実験単位・対応関係・必要差と標本数を確認 | 検出力計算は未実装。現行確認の事前登録検定とbootstrap参考区間を区別し、非対応検定の式を流用しない |
 | multi-exp-comparator | review作業票、COMPARISON.mdに指標・方向・改善幅・件数を出力 | 異なる研究条件を自動順位付けしない |
 
 もとの4スキル（research-onboarding / research-propose / research-experiment / research-analysis）は継続します。
@@ -51,8 +51,8 @@ v0.3の16スキルに前述2つを追加した合計18スキルです。cloneル
 | スキル・機構 | 理由・現在の扱い |
 |---|---|
 | wiring-smoke-guard | 動的な設定変更効果の試験契約が必要。ASTの注意喚起で代用済みとはしない |
-| benchmark-registry / repro-checker | 公式ベンチ登録、過去configの再実行、bootstrap CIは未実装 |
-| load-controlled-bench / 環境fingerprint / dataset manifest | Python/OS/コード/seedの登録のみ。負荷制御、依存パッケージ・データ版固定は未実装 |
+| benchmark-registry / repro-checker | 公式ベンチ登録・過去configの再実行は未実装。paired bootstrap区間は現行guardsに実装済み |
+| load-controlled-bench / 環境fingerprint / dataset manifest | 入力ハッシュ・固定コピー・Python/OS/パッケージ版を記録。負荷制御・環境の自動再構築は未実装 |
 | cost-label-guard / figure-toolkit / figure-provenance / presentation numbers | 図・発表資料生成と数値照合は未実装。現在は数値とMarkdown |
 | helper-adoption-guard | lab_exの共有ライブラリに依存。汎用版に同じimportを強制しない |
 | edge-fps-validator / ga-trajectory-golden-test | エッジ画像処理・GA専用。分野拡張で追加する対象 |
@@ -76,3 +76,9 @@ JSONは機械用の併存形式です。ユーザー向けの既定をGitHub Iss
 
 既存のv0.2状態は読み込めます。完了済みの過去サイクルに新しいゲートを通ったと遡及記録しません。
 次に受理するreviewからゲートが適用されます。
+
+## 一般化の継続方針
+
+目的と二段構造を残し、GA・画像処理固有の探索、入力、評価、可視化は分野別テンプレートへ整理する。
+原システムの全コード・条件はこのリポジトリに未収録。テンプレートの完全再現を称する前に確認する。
+[PROJECT_POLICY.md](PROJECT_POLICY.md)と[ROADMAP.md](ROADMAP.md)を基準に現行対応を更新する。

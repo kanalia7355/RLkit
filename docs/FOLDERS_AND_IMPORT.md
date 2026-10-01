@@ -32,6 +32,7 @@ RLkit/
          ├─ .rlk/
          │  ├─ state.sqlite3           方針・回答・状態・作業・試行・承認の正本
          │  ├─ source-versions/         実装受理時の共通srcの保存版
+         │  ├─ reference-snapshots/    本文照合用の固定資料
          │  ├─ jobs/
          │  │  └─ 8/                   作業ID（固定番号ではない）
          │  │     └─ attempt-1/         再試行はattempt-2へ
@@ -134,3 +135,6 @@ answersは通常の基本質問IDから確認済みのものだけを埋める�
 コピー失敗時の途中成果物はimport-stagingに残り、通常の研究一覧には公開しない。
 コピー後のフォルダ公開とセッションDB確定は単一原子操作ではないため、直後の障害では
 研究が一覧にあるのにセッションが未選択となる場合がある。openから保存済み研究を選び直す。
+
+新しい実験にはinputs、environment.json、requirements-lock.txt、seed別termination.json/comparison.jsonも保存する。
+図表の自動生成・添付は[ROADMAP.md](ROADMAP.md)の計画であり、この保存構成へまだ自動配置しない。

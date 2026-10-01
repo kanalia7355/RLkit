@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import time
 
+from .budget import active_seconds
 from .config import LoopError, dump, upgrade
 
 
@@ -16,7 +17,7 @@ def digest(value):
 
 
 # DBに別行で持ち、stateの本文へは保存しない派生項目。
-DERIVED_KEYS = ("history", "jobs", "failed_attempts", "diagnostics")
+DERIVED_KEYS = ("history", "jobs", "failed_attempts", "diagnostics", "active_seconds")
 
 
 class Store:
@@ -90,10 +91,16 @@ class Store:
         """state本文。履歴は含まない（必要なら history(db) を使う）。"""
         state = json.loads(db.execute("SELECT body FROM state WHERE id=1").fetchone()[0])
         state["config"] = upgrade(state["config"])
+        state["active_seconds"] = max(state.get("active_time_highwater", 0.0), active_seconds(db, state.get("started")))
         return state
 
     @staticmethod
     def save(db, state):
+        if state["config"].get("wall_time_basis") == "active_jobs":
+            # 状態更新時までに計上した稼働時間を時計の巻戻りで返却しない。
+            state["active_time_highwater"] = max(
+                state.get("active_time_highwater", 0.0), active_seconds(db, state.get("started"))
+            )
         db.execute("UPDATE state SET body=? WHERE id=1", (dump(strip_derived(state)),))
 
     @staticmethod

@@ -29,7 +29,7 @@ CLIの会話出力からJSONを推測して切り出さないため、各CLIの�
 ```
 
 `rlk configure PROJECT --file provider-settings.json` で登録できます。
-`roles` のキーはdeepen / ideas / plan / implement / review。
+`roles` のキーはdeepen / ideas / plan / implement / implementation_review / review / skill_design / skill_build。
 モデルを指定する場合は、利用中のCLIで利用できるmodel名を `model` へ入れます。
 未指定ならそのCLIのユーザー設定を引き継ぎます。モデル名をツール側で固定しません。
 追加オプションは `agent_args`（引数の配列）です。

@@ -57,7 +57,7 @@
 有効版は同じ研究の後続作業票に自動適用される。別研究やAgent全体のグローバルスキルには反映しない。
 
 スキルの設計・実装は各作業max_attempts回、1試行agent_timeout_secondsまで、テストはその残り時間かつ最大60秒。
-呼出し回数はskill_callsへ別記し、研究の時間・計算回数の上限は延長しない。
+呼出し回数はskill_callsへ別記し、研究の実験回数の上限は延長しない。研究全体の時間予算はスキル作業に適用しない。
 報告会後や再セッションでは「スキル改善」を選択すれば、研究を再実行せずに承認と育成を進められる。
 pause中にスキル改善の継続が選ばれたらskill-resumeでスキルだけを再開する。研究の一時停止は維持する。
 
@@ -99,7 +99,7 @@ skill-assessで証跡を提出し、utility_supported / regression / inconclusiv
 ## 再開・停止・出典の扱い
 
 完了済み研究には再開メニューのconfirmを提示し、diagnosticsの候補と残り予算を確認する。
-分岐では登録data_filesもコピーされる。停止条件はstop_policyで固定し、実装はrlk_stop.StopControllerを実際の更新へ接続する。
+分岐では登録data_filesもコピーされる。停止条件と両条件の予算をstop_policy/comparison_policyで固定し、実装はrlk_stop.ComparisonRecorderを実際の更新へ接続する。旧計画だけStopControllerを使う。
 出典はplan.referencesと各実験のreference_idsへ記録する。readは読んだ箇所・内容を残す申告であり、外部検証済みとは書かない。
 
 ## 比較・確認・本文固定
@@ -119,3 +119,15 @@ bonferroni・missing_policy=inconclusiveを固定し、confirmへprotocol_hash�
 content_checkedは登録snapshot_hash・本文に実在するquote・assessment・conditionsを残す。
 引用一致とAgentの意味解釈を区別し、取得元の真正性を自動認証したと称しない。
 詳細は配布元のdocs/EVIDENCE.md。利用者にJSON作成やコマンド入力を求めずAgentが内部で扱う。
+
+## 大方針と長期の中断・再開
+
+RLkitは元のGA・画像処理の研究ループを一般化し、方針に基づく実験・検証・分析・報告・次の提案を継承する。
+初回に目的、データ、評価、固定条件、変更範囲、資源、必要成果物を確認する。
+boundedは承認済み範囲で次計画を進め、目的・利用条件・禁止条件・外部サービス・予算を広げる変更は相談する。
+図表自動生成・分野別テンプレート・任意データの理解は未実装。生成できたと捏造しない。
+研究時間は既定で無期限(null)。有限active_jobsは方針承認後の取得済み研究仕事の稼働区間を数え、
+稼働のない中断・質問・承認待ちは除外する。取得済みAgentの応答待ちとpause後の稼働は含む。
+旧有限elapsedは初回承認からの経過期限を維持する。勝手に解除せず、条件変更は分岐する。
+再開時はプロセス・token・データ・環境を確認する。日数だけで新研究を要求しない。
+不明なrunningは停止確認後にrecoverし、回数予算・完了状態は無期限でも維持する。
