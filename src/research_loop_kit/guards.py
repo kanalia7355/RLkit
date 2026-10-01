@@ -5,7 +5,7 @@ import hashlib
 import random
 import statistics
 
-from . import quality
+from . import confirmation, quality, references
 from .config import LoopError, number, read_json
 from .shared_source import read_code
 from .store import digest
@@ -90,6 +90,12 @@ def verify_evidence(root, entry):
         manifest = read_json(directory / "preregistration.json")
         if manifest != result["manifest"] or manifest["proposal_hash"] != entry["proposal_hash"]:
             raise LoopError("事前登録が集計・採用方針と一致しません")
+        if "references" in manifest:
+            references.verify_references(
+                root,
+                {"references": manifest["references"], "experiments": [manifest["experiment"]]},
+                manifest.get("reference_sources", {}),
+            )
         sources = read_code(directory / "code")
         if digest(sources) != manifest["code_hash"]:
             raise LoopError("事前登録後に実験コードが変更されています")
@@ -114,6 +120,10 @@ def verify_evidence(root, entry):
             number(measured["treatment"], "treatment")
             if manifest["experiment"].get("stop_policy"):
                 quality.verify_stop(run_dir / "termination.json", manifest["experiment"]["stop_policy"])
+            if manifest["experiment"].get("comparison_policy"):
+                quality.verify_comparison(
+                    run_dir / "comparison.json", manifest["experiment"]["comparison_policy"], measured
+                )
             for name in ("stdout.log", "stderr.log"):
                 if not (run_dir / name).is_file():
                     raise LoopError(f"実行ログがありません: {name}")
@@ -134,6 +144,15 @@ def verify_evidence(root, entry):
             expected.pop("effect_ci95")
         if any(result.get(key) != value for key, value in expected.items()):
             raise LoopError("記述統計の再計算と集計値が一致しません")
+        if manifest.get("confirmation_protocol"):
+            analysis = confirmation.analyze(
+                values,
+                manifest["experiment"],
+                manifest["confirmation_protocol"],
+                complete=result["status"] == "measured",
+            )
+            if result.get("confirmation_analysis") != analysis:
+                raise LoopError("確認実験の事前登録した統計判定が一致しません")
         if read_json(directory / "analysis.json") != result:
             raise LoopError("保存された分析とレビュー対象が一致しません")
         checked.append({"id": result["id"], "status": "verified", "n": len(values)})

@@ -8,6 +8,7 @@ import sqlite3
 import time
 import uuid
 
+from . import references
 from .config import QUESTIONS, LoopError, dump, make_config, nonempty
 from .engine import Engine
 from .fsutil import no_links, write_atomic
@@ -403,9 +404,16 @@ class Sessions:
         for relative, content in shared.items():
             write_atomic(engine.root / "src" / relative, content)
         previous = source["state"]
+        for registration in previous.get("reference_sources", {}).values():
+            references.source_text(origin, registration)
+            target = engine.root / registration["record"]["snapshot"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((origin / registration["record"]["snapshot"]).read_bytes())
+            references.source_text(engine.root, registration)
         with engine.store.transaction() as research_db:
             state = engine.store.state(research_db)
             state["answers"] = {k: v for k, v in previous["answers"].items() if action != "branch" or k in QUESTIONS}
+            state["reference_sources"] = previous.get("reference_sources", {})
             state["prior_research"] = {
                 "path": source["path"],
                 "fingerprint": source["fingerprint"],
@@ -429,6 +437,7 @@ class Sessions:
                     {
                         "candidates": selected,
                         "require_stop_policy": True,
+                        "require_comparison_policy": True,
                         "previous_proposal": old_plan,
                         "feedback": feedback,
                         "user_selected_candidate_ids": candidate_ids,
@@ -448,6 +457,7 @@ class Sessions:
                 "doctor",
                 "questions",
                 "confirm",
+                "confirmation-plan",
                 "next",
                 "submit",
                 "run",

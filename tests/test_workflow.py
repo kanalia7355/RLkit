@@ -133,7 +133,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(e.status()["runs"], 4)
         review = e.claim({"review"})
         e.submit(review["id"], review["token"], respond(review, e.status()))
-        self.assertEqual(e.status()["history"][-1]["claim_status"]["e1"], "confirmed")
+        self.assertEqual(e.status()["history"][-1]["claim_status"]["e1"], "threshold_replicated")
         self.assertEqual(entry(self.root, ["work", sid, "retry", "1"]), 2)
 
     def test_confirmation_disabled_without_runs_and_for_unfinished_study(self):
@@ -178,7 +178,7 @@ class WorkflowTests(unittest.TestCase):
         implementation = e.claim({"implement"})
         result = respond(implementation, e.status())
         result["files"]["experiment.py"] = result["files"]["experiment.py"].replace(
-            ", stop=StopController.from_environment()", ""
+            ", comparison=ComparisonRecorder.from_environment()", ""
         )
         e.submit(implementation["id"], implementation["token"], result)
         gate = e.claim({"implementation_review"})
@@ -194,7 +194,9 @@ class WorkflowTests(unittest.TestCase):
         plan["experiments"][0].pop("stop_policy")
         with self.assertRaisesRegex(LoopError, "stop_policy"):
             Engine._check_plan({"payload": {"require_stop_policy": True}}, plan, state)
+        plan["experiments"][0].pop("comparison_policy", None)
         Engine._check_plan({"payload": {}}, plan, state)
+        plan["experiments"][0].pop("comparison_policy", None)
         result = respond({"kind": "implement", "payload": {"experiment": plan["experiments"][0]}}, state)
         directory = self.root / "legacy-execution"
         directory.mkdir()
@@ -224,6 +226,7 @@ class WorkflowTests(unittest.TestCase):
             policy = dict(kind=kind, max_iterations=8, min_iterations=3, patience=2, tolerance=1000000)
             if kind == "no_improvement":
                 policy["direction"] = "minimize"
+            response["experiments"][0]["comparison_policy"]["treatment"]["stop_policy"] = policy
             response["experiments"][0].update(stop_policy=policy, stop_rule="3回以降に適応停止", method="最大8更新")
             e.submit(job["id"], job["token"], response)
             e.accept(e.status()["proposal_hash"])

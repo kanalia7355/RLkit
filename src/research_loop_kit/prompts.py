@@ -68,6 +68,21 @@ SCHEMAS = {
                 "success_rule": "この差を採用する根拠",
                 "stop_rule": "計算予算以外の実験の終了条件",
                 "stop_policy": {"kind": "fixed_iterations", "max_iterations": 8},
+                "comparison_policy": {
+                    "basis": "iterations",
+                    "unit": "更新回数",
+                    "rationale": "同じ更新上限で比較する",
+                    "baseline": {
+                        "stop_policy": {"kind": "fixed_iterations", "max_iterations": 8},
+                        "max_evaluations": 8,
+                        "max_wall_seconds": 60,
+                    },
+                    "treatment": {
+                        "stop_policy": {"kind": "fixed_iterations", "max_iterations": 8},
+                        "max_evaluations": 8,
+                        "max_wall_seconds": 60,
+                    },
+                },
                 "reference_ids": [],
                 "limitations": "交絡・標本数・実施条件の限界",
             }
@@ -233,3 +248,21 @@ def render(job, state, response_path, root=None):
         f"保存先（UTF-8 JSON、コードフェンスなし）: {response_path}\n"
         f"作業ID: {job['id']} / token: {job['token']}\n"
     )
+
+
+INSTRUCTIONS["plan"] += (
+    " comparison_policyは必須。basisはiterations/evaluations/wall_seconds/independent。"
+    "unitで評価回数の単位、rationaleで揃える予算・独立予算の理由を記す。各条件にstop_policy/max_evaluations/max_wall_secondsを固定。"
+    "basisがindependent以外なら指定した上限を揃える。早期停止時の実際のコスト一致は保証しない。"
+    "content_checkedにはreference-registerで固定したsnapshot_hashと本文に存在するquote、解釈assessment、conditionsが必要。"
+)
+INSTRUCTIONS["implement"] += (
+    " comparison_policyがあればfrom rlk_stop import ComparisonRecorderを使う。rec=ComparisonRecorder.from_environment()、"
+    "with rec.condition('baseline') as c:とtreatmentの別ブロック内でc.step(主指標,evaluations=評価回数)を呼ぶ。"
+    "Trueで停止し最終観測をbaseline/treatmentの出力値に一致させる。前処理・訓練をどの計測範囲へ含めるか明示し、両条件全体を測る。"
+    "評価回数は計測範囲で実際に使用した回数を加算。外部リソースや申告漏れの自動監査はできない。"
+)
+INSTRUCTIONS["review"] += (
+    " confirmation_analysisがあれば事前登録法・標本数・ファミリー補正・欠測を説明し、"
+    "threshold_replicatedとregistered_statistical_supportを区別する。検定は最小効果を超えるseedの確率に関するもの。"
+)

@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 
-from . import evolution, quality, references, shared_source, stopping
+from . import confirmation, evolution, quality, references, shared_source, stopping
 from .config import QUESTIONS, LoopError, dump, nonempty, number, read_json, strings, validate
 from .diagnostics import diagnose
 from .fsutil import write_atomic, write_new
@@ -129,6 +129,7 @@ class Engine:
                 raise LoopError("表示した最新の提案ハッシュが必要です")
             if state["proposal"]["open_questions"]:
                 raise LoopError("未解決事項があります。rlk reviseで方針を修正してください")
+            references.verify_references(self.root, state["proposal"], state.get("reference_sources", {}))
             state["authorized"] = True
             state["started"] = state["started"] or time.time()
             self.store.event(db, "accepted", {"proposal_hash": proposal_hash, "config_hash": digest(state["config"])})
@@ -150,6 +151,7 @@ class Engine:
                     "previous_proposal": state["proposal"],
                     "feedback": feedback,
                     "require_stop_policy": True,
+                    "require_comparison_policy": True,
                 },
             )
             state["phase"] = "planning"
@@ -174,7 +176,53 @@ class Engine:
                 },
             )
 
-    def confirm(self, cycle, experiment_id, expected_hash, seeds):
+    def register_reference(self, path, origin, version):
+        with self.store.transaction() as db:
+            state = self.store.state(db)
+            if len(state.get("reference_sources", {})) >= 100:
+                raise LoopError("登録本文は100件以内です")
+            source = references.register_source(self.root, path, origin, version)
+            state.setdefault("reference_sources", {})[source["hash"]] = source
+            self.store.save(db, state)
+            self.store.event(db, "reference_registered", source)
+        return source
+
+    def plan_confirmation(self, protocol):
+        confirmation.validate(protocol)
+        with self.store.transaction() as db:
+            state = self.store.state(db)
+            if state["phase"] != "complete" or state["paused"]:
+                raise LoopError("確認方針は停止していない完了研究で登録してください")
+            if any(
+                p["protocol"]["family_id"] == protocol["family_id"] for p in state.get("confirmation_protocols", [])
+            ):
+                raise LoopError("比較ファミリーIDは登録済みです")
+            history = self.store.history(db)
+            jobs = self.store.jobs(db)
+            for member in protocol["members"]:
+                entry = next((h for h in history if h["cycle"] == member["cycle"]), None)
+                result = next((r for r in entry["results"] if r["id"] == member["experiment"]), None) if entry else None
+                if (
+                    not result
+                    or digest(result) != member["result_hash"]
+                    or result["status"] != "measured"
+                    or not result.get("threshold_met")
+                    or result["manifest"].get("stage", "exploration") != "exploration"
+                ):
+                    raise LoopError("事前登録には最新の閾値到達した探索結果が必要です")
+                verify_evidence(self.root, entry)
+                if confirmation.registered(state, member["result_hash"]) or any(
+                    j["payload"].get("confirmation_of", {}).get("result_hash") == member["result_hash"] for j in jobs
+                ):
+                    raise LoopError("確認済み・予約済み・登録済みの結果を別のファミリーへ登録できません")
+            registration = {"hash": digest(protocol), "protocol": protocol}
+            state.setdefault("confirmation_protocols", []).append(registration)
+            self.store.save(db, state)
+            self.store.event(db, "confirmation_preregistered", registration)
+        self.export()
+        return registration["hash"]
+
+    def confirm(self, cycle, experiment_id, expected_hash, seeds, protocol_hash=None):
         """明示的な依頼で、コード・比較条件を変えず未使用seedの確認実験を開始する。"""
         if (
             not isinstance(seeds, list)
@@ -215,6 +263,17 @@ class Engine:
             )
             if not origin or not origin["payload"].get("validation"):
                 raise LoopError("確認実験には実行前検証済みの実装が必要です")
+            registration = confirmation.registered(state, expected_hash)
+            if registration:
+                if protocol_hash != registration["hash"] or len(seeds) != registration["protocol"]["seed_count"]:
+                    raise LoopError("固定した確認方針のハッシュと予定seed数が必要です")
+                if any(
+                    j["payload"].get("confirmation_of", {}).get("result_hash") == expected_hash
+                    for j in self.store.jobs(db)
+                ):
+                    raise LoopError("事前登録した確認比較を追加seedでやり直せません。既存の作業を復旧してください")
+            elif protocol_hash:
+                raise LoopError("登録されていない確認方針です")
             next_cycle = max(h["cycle"] for h in history) + 1
             spec = source["manifest"]["experiment"]
             proposal = dict(entry["proposal"], experiments=[spec], direction="確認実験: " + entry["direction"])
@@ -223,6 +282,7 @@ class Engine:
                 origin["payload"],
                 seeds=seeds,
                 stage="confirmation",
+                confirmation_protocol=registration,
                 proposal_hash=state["proposal_hash"],
                 confirmation_of={"cycle": cycle, "id": experiment_id, "result_hash": expected_hash},
             )
@@ -453,6 +513,8 @@ class Engine:
         if validator is None:
             raise LoopError("execute結果は実測経路からのみ登録できます")
         validator(job, result, state)
+        if job["kind"] == "plan":
+            references.verify_references(self.root, result, state.get("reference_sources", {}))
 
     @staticmethod
     def _check_skill_design(job, result, state):
@@ -533,6 +595,15 @@ class Engine:
                     stopping.validate_policy(plan["stop_policy"])
                 except ValueError as exc:
                     raise LoopError(str(exc)) from exc
+            if job["payload"].get("require_comparison_policy") and "comparison_policy" not in plan:
+                raise LoopError("新しい計画には両条件のcomparison_policyが必要です")
+            if "comparison_policy" in plan:
+                try:
+                    stopping.validate_comparison(plan["comparison_policy"])
+                except ValueError as exc:
+                    raise LoopError(str(exc)) from exc
+                if plan["comparison_policy"]["treatment"]["stop_policy"] != plan.get("stop_policy"):
+                    raise LoopError("介入の停止条件がstop_policyと一致しません")
             plan["id"] = f"e{i + 1}"
 
     def _check_implement(self, job, result, state):
@@ -701,7 +772,12 @@ class Engine:
                 if j["kind"] == "ideas":
                     candidates += j["result"]["candidates"]
             state["candidates"] = [dict(c, id=f"c{i + 1}") for i, c in enumerate(candidates)]
-            self.store.job(db, state["cycle"], "plan", {"candidates": state["candidates"], "require_stop_policy": True})
+            self.store.job(
+                db,
+                state["cycle"],
+                "plan",
+                {"candidates": state["candidates"], "require_stop_policy": True, "require_comparison_policy": True},
+            )
             state["phase"] = "planning"
         elif kind == "plan":
             state.update(phase="approval", proposal=result, proposal_hash=digest(result))
@@ -760,7 +836,7 @@ class Engine:
         }
         entry["claim_status"] = {
             r["id"]: (
-                "confirmed"
+                "threshold_replicated"
                 if r.get("manifest", {}).get("stage") == "confirmation"
                 and r["status"] == "measured"
                 and r.get("threshold_met")
@@ -771,6 +847,12 @@ class Engine:
             )
             for r in results
         }
+        for r in results:
+            if r.get("confirmation_analysis"):
+                supported = next(v for v in review["experiments"] if v["id"] == r["id"])["assessment"] == "supported"
+                entry["claim_status"][r["id"]] = (
+                    r["confirmation_analysis"]["status"] if supported else "confirmation_inconclusive"
+                )
         checks = verify_evidence(self.root, entry)
         view = dict(
             state,
@@ -852,11 +934,15 @@ class Engine:
         manifest = {
             "experiment": experiment,
             "references": state.get("proposal", {}).get("references", []),
+            "reference_sources": references.verify_references(
+                self.root, state.get("proposal", {}), state.get("reference_sources", {})
+            ),
             "proposal_hash": job["payload"]["proposal_hash"],
             "code_hash": digest(sources),
             "seeds": seeds,
             "stage": job["payload"].get("stage", "exploration"),
             "confirmation_of": job["payload"].get("confirmation_of"),
+            "confirmation_protocol": job["payload"].get("confirmation_protocol"),
             "validation": validation,
             "data_manifest": expected_data,
             "environment": quality.environment(),
@@ -909,6 +995,8 @@ class Engine:
                         "RLK_INPUT_DIR": inputs,
                         "RLK_STOP_POLICY": dump(experiment.get("stop_policy")),
                         "RLK_STOP_RECORD": str(run_dir / "termination.json"),
+                        "RLK_COMPARISON_POLICY": dump(experiment.get("comparison_policy")),
+                        "RLK_COMPARISON_RECORD": str(run_dir / "comparison.json"),
                     },
                 )
                 metrics = read_json(output)
@@ -920,6 +1008,8 @@ class Engine:
                 number(metrics["treatment"], "treatment")
                 if experiment.get("stop_policy"):
                     quality.verify_stop(run_dir / "termination.json", experiment["stop_policy"])
+                if experiment.get("comparison_policy"):
+                    quality.verify_comparison(run_dir / "comparison.json", experiment["comparison_policy"], metrics)
                 metrics["wall_seconds"] = time.monotonic() - start
                 values.append(metrics)
                 elapsed = time.time() - manifest["started"]
@@ -953,6 +1043,10 @@ class Engine:
             "evidence": directory.relative_to(self.root).as_posix(),
             "manifest": manifest,
         }
+        if manifest.get("confirmation_protocol"):
+            result["confirmation_analysis"] = confirmation.analyze(
+                values, experiment, manifest["confirmation_protocol"], complete=not stopped
+            )
         if stopped:
             result["threshold_met"] = False
         write_new(directory / "analysis.json", dump(result))
@@ -1080,6 +1174,8 @@ def proposal_document(state):
             f"判定根拠: {p['success_rule']}",
             "",
             f"停止条件: {p['stop_rule']}",
+            "",
+            f"比較予算: {p.get('comparison_policy', '未登録')}",
             "",
             f"限界: {p['limitations']}",
             "",

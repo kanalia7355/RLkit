@@ -81,6 +81,15 @@ def parser():
     confirm.add_argument("--experiment", required=True)
     confirm.add_argument("--hash", required=True)
     confirm.add_argument("--seeds", nargs="+", type=int, required=True)
+    confirm.add_argument("--protocol-hash")
+    confirmation_plan = sub.add_parser("confirmation-plan", help="確認seed数・判定・比較ファミリーを固定")
+    confirmation_plan.add_argument("root")
+    confirmation_plan.add_argument("--file", required=True)
+    reference = sub.add_parser("reference-register", help="研究内のUTF-8資料本文を固定")
+    reference.add_argument("root")
+    reference.add_argument("--path", required=True)
+    reference.add_argument("--origin", required=True)
+    reference.add_argument("--version", required=True)
     plan_assessment = sub.add_parser("skill-evaluation-plan", help="スキルの比較事例と指標を事前に固定")
     plan_assessment.add_argument("root")
     plan_assessment.add_argument("name")
@@ -270,7 +279,11 @@ def main(argv=None):
         elif command == "accept":
             engine.accept(args.hash)
         elif command == "confirm":
-            engine.confirm(args.cycle, args.experiment, args.hash, args.seeds)
+            engine.confirm(args.cycle, args.experiment, args.hash, args.seeds, args.protocol_hash)
+        elif command == "reference-register":
+            output = engine.register_reference(args.path, args.origin, args.version)
+        elif command == "confirmation-plan":
+            output = {"protocol_hash": engine.plan_confirmation(read_json(args.file))}
         elif command == "skill-evaluation-plan":
             output = {"protocol_hash": engine.plan_skill_assessment(args.name, read_json(args.file))}
         elif command == "skill-assess":
