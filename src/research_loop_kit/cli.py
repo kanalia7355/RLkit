@@ -140,11 +140,13 @@ def wizard(root, overrides):
         ("max_cycles", "最大サイクル数", 1),
         ("max_agent_calls", "AI作業回数上限", 40),
         ("max_runs", "seed別実行回数上限", 30),
-        ("max_wall_seconds", "研究セッション時間上限（秒）", 7200),
     ]:
         current = overrides.get(key, default)
         text = input(f"{label} [{current}]: ").strip()
         overrides[key] = int(text) if text else current
+    current = overrides.get("max_wall_seconds")
+    text = input(f"研究の稼働時間予算（秒、noneで無期限） [{current if current is not None else 'none'}]: ").strip()
+    overrides["max_wall_seconds"] = None if text.lower() == "none" else int(text) if text else current
     text = input("seedをカンマ区切りで [11,22,33,44,55]: ").strip()
     if text:
         overrides["seeds"] = [int(x.strip()) for x in text.split(",")]

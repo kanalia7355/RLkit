@@ -157,7 +157,7 @@ INSTRUCTIONS["plan"] += (
     "readには実際に読んだ箇所locatorと要約noteが必須。読んでいない資料をreadにしない。"
 )
 INSTRUCTIONS["implement"] += (
-    " stop_policyがある場合、ランタイム同梱のfrom rlk_stop import StopControllerを使い"
+    " 旧いcomparison_policyのない計画にstop_policyがある場合だけ、ランタイム同梱のfrom rlk_stop import StopControllerを使い"
     "StopController.from_environment()で固定方針を読み、各更新の実測指標をstep(value)へ渡す。"
     "Trueなら反復を終える。終了時にRLK_STOP_RECORDへ観測列が自動保存される。"
     "両条件を同じ更新予算で比較するか、methodに記した固定対照を使う。rlk_stop.pyはfilesへ含めない。"
@@ -265,4 +265,10 @@ INSTRUCTIONS["implement"] += (
 INSTRUCTIONS["review"] += (
     " confirmation_analysisがあれば事前登録法・標本数・ファミリー補正・欠測を説明し、"
     "threshold_replicatedとregistered_statistical_supportを区別する。検定は最小効果を超えるseedの確率に関するもの。"
+)
+
+INSTRUCTIONS["plan"] += (
+    " 研究目的・固定条件・変更可能な範囲・利用条件・予算・必要成果物を回答と照合する。"
+    "boundedでも承認済み範囲を広げる変更を自動採用させずopen_questionsへ残し相談する。"
+    "図表自動生成や分野別テンプレートの未実装を実行済みと記さない。"
 )

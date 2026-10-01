@@ -1,4 +1,14 @@
-# 検証記録 — 2026-09-11
+# 検証範囲と版別の記録
+
+## 現行の基準
+
+PR #6のv0.8基準は121テスト、2題材22seedの固定回答受入試験、ZIP/wheel配布検証。
+Linux・Windows・macOS × Python 3.10/3.12とlintの全7CIジョブで成功した。
+認証済みCodex/Claude/Gemini/OpenCodeの実運用、未知課題での研究判断品質、図表自動生成はこの試験に含まれない。
+
+v0.9は方針・文書・仕事票の整理、無期限の研究再開、任意の稼働時間予算を追加する。
+時間予算の無期限・有限・旧設定、待機・並列区間、時計巻戻り、実験起動、再開メニューを回帰試験する。
+各PRのCIを現行の検証結果として参照し、以下は対象版・当時の検証環境を保持した履歴。
 
 ## v0.6 — 共通srcと短い実験入口
 
@@ -136,17 +146,17 @@ active方式のAgent応答は試験用応答、custom方式は試験用の別プ
 python -m unittest discover -s tests -v
 python -m pip wheel . --no-deps --wheel-dir dist
 python tools/export_project.py --output dist/source-new.zip
-python tools/verify_release.py --archive dist/source-new.zip --wheel dist/research_loop_kit-0.4.0-py3-none-any.whl
+python tools/verify_release.py --archive dist/source-new.zip --wheel dist/research_loop_kit-0.9.0-py3-none-any.whl
 ```
 
 ## 未検証・今後の確認
 
 - Codex / Claude Code / Gemini CLI / OpenCodeでの認証付き実運用
-- Linux、macOS、Python 3.12の実機実行（WindowsとUbuntu向けCI定義は同梱）
+- Agent製品UIでの起動・権限・認証。OS/PythonランタイムのCI検証とは区別する
 - 任意の実データ、任意の専門分野における研究結論の妥当性
 - 実機、人を対象とする研究、多群推測統計、外部サービスの副作用
 
-## 親リポジトリでの作業条件
+## 独立化時の作業記録（2026-09-11・現行運用の前提ではない）
 
 既存研究のSTATEと進捗を参照しました。作業前のgit-syncによるpullは、既存の未コミット変更により
 失敗しました。既存変更の退避・上書き・全件commit/pushは行っていません。

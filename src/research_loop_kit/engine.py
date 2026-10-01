@@ -12,6 +12,7 @@ import time
 import uuid
 
 from . import confirmation, evolution, quality, references, shared_source, stopping
+from .budget import remaining_seconds
 from .config import QUESTIONS, LoopError, dump, nonempty, number, read_json, strings, validate
 from .diagnostics import diagnose
 from .fsutil import write_atomic, write_new
@@ -420,7 +421,7 @@ class Engine:
     @staticmethod
     def _budget_exhausted(state):
         cfg = state["config"]
-        if state["started"] and time.time() - state["started"] >= cfg["max_wall_seconds"]:
+        if remaining_seconds(state) <= 0:
             return "研究セッションの実時間上限です。新しい研究フォルダで継続してください"
         if state["agent_calls"] >= cfg["max_agent_calls"]:
             return "AI作業回数の上限です"
@@ -446,7 +447,7 @@ class Engine:
         elif kind == "implementation_review":
             if state.get("validation_calls", 0) >= cfg["max_validation_calls"]:
                 return "実行前レビュー回数の上限です"
-            if state["started"] and time.time() - state["started"] >= cfg["max_wall_seconds"]:
+            if remaining_seconds(state) <= 0:
                 return "研究セッションの実時間上限です"
         elif kind == "review":
             # 実測済みの結果を報告できないまま止めないため、レビューは実時間・作業回数の上限を免除する。
@@ -672,7 +673,7 @@ class Engine:
             remaining = state["config"]["agent_timeout_seconds"] - (time.time() - job["started"])
             paused = state.get("skills_paused", state["paused"]) if job["kind"] == "skill_build" else state["paused"]
             if job["kind"] == "implementation_review" and state["started"]:
-                remaining = min(remaining, state["config"]["max_wall_seconds"] - (time.time() - state["started"]))
+                remaining = min(remaining, remaining_seconds(state))
             if remaining <= 0 or paused:
                 raise LoopError("停止中または時間上限のためスキルを検証できません")
             if job["kind"] == "skill_build":
@@ -973,7 +974,7 @@ class Engine:
                         raise LoopError("実行権が失効しました")
                     if current["paused"]:
                         raise LoopError("一時停止により次のseedを起動しません")
-                    remaining = cfg["max_wall_seconds"] - (time.time() - current["started"])
+                    remaining = remaining_seconds(current)
                     if remaining <= 0 or current["runs"] >= cfg["max_runs"]:
                         raise LoopError("実験予算を使い切りました")
                     current["runs"] += 1
@@ -1066,7 +1067,7 @@ class Engine:
                 state = self.status()
                 timeout = state["config"]["agent_timeout_seconds"]
                 if state["started"] and job["kind"] not in (*evolution.KINDS, "review"):
-                    timeout = min(timeout, state["config"]["max_wall_seconds"] - (time.time() - state["started"]))
+                    timeout = min(timeout, remaining_seconds(state))
                 if timeout <= 0:
                     raise LoopError("セッション時間の上限です")
                 result = invoke(job, state, self.ticket_dir(job), timeout)

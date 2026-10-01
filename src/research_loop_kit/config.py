@@ -35,7 +35,8 @@ DEFAULTS = {
     "max_attempts": 2,
     "agent_timeout_seconds": 900,
     "run_timeout_seconds": 300,
-    "max_wall_seconds": 7200,
+    "max_wall_seconds": None,
+    "wall_time_basis": "active_jobs",
     "autonomy": "review_each_cycle",
 }
 
@@ -88,7 +89,10 @@ def upgrade(config):
     """旧版で保存した設定へ、後から追加された項目の既定値を補う（未知の項目は残し検証で拒否）。"""
     if not isinstance(config, dict):
         raise LoopError("設定はJSONオブジェクトが必要です")
-    return dict(copy.deepcopy(DEFAULTS), **config)
+    merged = dict(copy.deepcopy(DEFAULTS), **config)
+    if "wall_time_basis" not in config and config.get("max_wall_seconds") is not None:
+        merged["wall_time_basis"] = "elapsed"  # 保存済みの明示的な期限を維持する。
+    return merged
 
 
 def validate(config):
@@ -105,6 +109,11 @@ def validate(config):
         if type(DEFAULTS[key]) is int and key != "schema_version":
             if type(config[key]) is not int or not 1 <= config[key] <= 10_000_000:
                 raise LoopError(f"{key} は正の整数が必要です")
+    cap = config["max_wall_seconds"]
+    if cap is not None and (type(cap) is not int or not 1 <= cap <= 10_000_000):
+        raise LoopError("max_wall_secondsはnull（無期限）または正の整数秒です")
+    if config["wall_time_basis"] not in ("active_jobs", "elapsed"):
+        raise LoopError("wall_time_basisはactive_jobs / elapsedです")
     if config["backend"] not in BACKENDS:
         raise LoopError("未対応の backend です")
     if not isinstance(config["model"], str):
@@ -147,4 +156,4 @@ def validate(config):
 
 
 def make_config(overrides=None):
-    return validate(upgrade(overrides or {}))
+    return validate(dict(copy.deepcopy(DEFAULTS), **(overrides or {})))

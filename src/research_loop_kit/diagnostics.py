@@ -1,5 +1,6 @@
 """状態の説明と復旧案内。判定は実際のジョブ取得条件を共有する。"""
 
+from .budget import remaining_seconds
 from .confirmation import registered
 from .store import digest
 
@@ -109,7 +110,11 @@ def diagnose(state, blocker, exhausted):
         "phase": state["phase"],
         "paused": state["paused"],
         "remaining": remaining,
-        "deadline": state["started"] + cfg["max_wall_seconds"] if state["started"] else None,
+        "deadline": state["started"] + cfg["max_wall_seconds"]
+        if state["started"] is not None and cfg["max_wall_seconds"] is not None and cfg["wall_time_basis"] == "elapsed"
+        else None,
+        "wall_time_basis": cfg["wall_time_basis"],
+        "remaining_seconds": None if cfg["max_wall_seconds"] is None else remaining_seconds(state),
         "jobs": items,
         "next_actions": actions,
         "confirmation_candidates": candidates,

@@ -17,7 +17,7 @@ srcとデータの継承はstagingで完了させ、その後に研究一覧へ�
 新規セッションのメニューで「探索結果を固定条件・未使用seedで確認する」を選ぶ。
 `diagnostics.confirmation_candidates`に、サイクル、実験ID、結果ハッシュを提示する。
 完了・停止していない研究で、実行前検証済みの探索結果が閾値に到達し、
-確認用の実行回数・時間・Agent予算が残っている場合に選択できる。
+確認用の実行回数・任意の有限時間・Agent予算が残っている場合に選択できる。
 候補表示は予備判定であり、confirm時に証跡・実行環境・未使用seedを再検査する。
 
 Agentは未使用seedを会話で確定し、内部入口からconfirmを呼ぶ。
@@ -50,7 +50,8 @@ max_iterationsは1..100000、min_iterations/patienceは1..max_iterationsの整�
 toleranceは有限の非負数。適応停止も最大回数で必ず終了する。
 観測の単位、両条件への適用、固定する対照の計算予算はmethodへ記す。
 
-実装は同梱の`rlk_stop.py`をimportし、StopController.from_environment()で方針を読む。
+新しい計画はcomparison_policyも必須。実装は同梱の`rlk_stop.py`のComparisonRecorder.from_environment()で両条件の方針を読み、baseline/treatmentの別conditionブロックで計測する。
+旧いcomparison_policyのない実験だけはStopController.from_environment()を使う。
 実際の更新・走査ごとにstep(value)を呼び、Trueなら終了する。
 ランタイムがこのモジュールを実装へ加え、コードハッシュの対象として保存する。
 停止時はtermination.jsonへ方針・回数・理由・観測列が自動保存される。
@@ -65,7 +66,10 @@ toleranceは有限の非負数。適応停止も最大回数で必ず終了す�
 
 plan.referencesにid/source/claim/relevance/statusを保存し、
 各実験のreference_idsで対応付ける。重複ID、未知の参照ID、不正なstatusは受理しない。
-statusはunread/read。readでは読んだ箇所locatorと要約・限界noteが必要。
+statusはunread/read/content_checked。readでは読んだ箇所locatorと要約・限界noteが必要。
 資料一覧は方針ハッシュと事前登録へ固定し、報告書に表示する。
 readはAgentの読み取り申告であり、出典の実在や主張の外部検証を意味しない。
 未読、読了申告、資料未登録のいずれも、報告では外部未検証と明記する。
+
+本文固定・引用一致、確認事前登録、両条件の計測契約は[EVIDENCE.md](EVIDENCE.md)を正本とする。
+研究全体は既定で無期限。有限の稼働時間と旧版期限の扱いは[PROJECT_POLICY.md](PROJECT_POLICY.md#無期限の中断・再開)を参照する。
