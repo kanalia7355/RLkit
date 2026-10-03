@@ -188,6 +188,35 @@ PHASE_SKILLS = {
 
 PHASE_SKILLS["implementation_review"] = ["research-experiment", "experiment-review-panel", "dead-impl-detector"]
 
+# Procedural skills use the existing job schema and execution gates; they do not
+# introduce private-project runners or bypass the response-only contract.
+PHASE_SKILLS["plan"] += [
+    "benchmark-registry",
+    "repro-checker",
+    "load-controlled-bench",
+    "cost-label-guard",
+    "ab-test-runner",
+]
+PHASE_SKILLS["implement"] += [
+    "wiring-smoke-guard",
+    "contract-test-guard",
+    "ab-test-runner",
+]
+PHASE_SKILLS["implementation_review"] += [
+    "wiring-smoke-guard",
+    "contract-test-guard",
+    "repro-checker",
+]
+PHASE_SKILLS["review"] += [
+    "benchmark-registry",
+    "repro-checker",
+    "load-controlled-bench",
+    "cost-label-guard",
+    "figure-toolkit",
+    "ab-test-runner",
+    "system-doctor",
+]
+
 
 def payload_view(job, root):
     """作業票に載せる入力。実装ジョブではハッシュ参照の共通srcを全文へ展開する。"""

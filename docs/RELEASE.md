@@ -27,5 +27,5 @@ cloneまたはZIP展開後、そのフォルダをAgentで開く。通常操作�
 Python 3.10以上が内部処理に必要。外部CLI方式にはインストール・認証・応答先への権限が別途必要。
 認証付き4製品の実運用は未検証。[検証記録](VALIDATION.md)を参照する。
 
-元システムからの独立化の経緯は[ARCHITECTURE.md](ARCHITECTURE.md)と[SKILL_MIGRATION.md](SKILL_MIGRATION.md)へ保持する。
+構成と同梱スキルの適用範囲は[ARCHITECTURE.md](ARCHITECTURE.md)と[SKILLS.md](SKILLS.md)で確認する。
 今後の一般化は[ROADMAP.md](ROADMAP.md)に従う。

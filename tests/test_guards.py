@@ -112,7 +112,7 @@ class GuardTests(unittest.TestCase):
         self.assertIn("name: experiment-review-panel", text)
         self.assertIn("GitHub Issue", text)
         for family in (".agents", ".claude", ".gemini", ".opencode"):
-            self.assertEqual(len(list((self.root / family / "skills").glob("*/SKILL.md"))), 18)
+            self.assertEqual(len(list((self.root / family / "skills").glob("*/SKILL.md"))), 27)
 
 
 if __name__ == "__main__":
