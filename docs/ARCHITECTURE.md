@@ -50,4 +50,4 @@ SQLiteの取得トランザクションとjob/attempt/tokenで重複取得を防
 exportで確定済み状態から文書を再生成する。ゲートの文書ハッシュは確定時点の値で、累積文書の現在値ではない。
 OSサンドボックスや外部サービス副作用の厳密な一度だけの実行は保証しない。
 
-元スキルとの対応は[SKILL_MIGRATION.md](SKILL_MIGRATION.md)、証跡契約は[EVIDENCE.md](EVIDENCE.md)。
+同梱スキルの適用範囲は[SKILLS.md](SKILLS.md)、証跡契約は[EVIDENCE.md](EVIDENCE.md)。
