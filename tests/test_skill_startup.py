@@ -5,6 +5,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -46,3 +47,16 @@ class SkillStartupTests(unittest.TestCase):
             (root / ".claude").symlink_to(outside, target_is_directory=True)
             ensure_skills(root)
             self.assertEqual(list(outside.iterdir()), [])
+
+    def test_crlf_assets_are_installed_as_lf_without_content_loss(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "package"
+            source = package / "assets/skills/example"
+            source.mkdir(parents=True)
+            text = "---\nname: example\n---\n日本語の手順\n"
+            (source / "SKILL.md").write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+            root = Path(tmp) / "study"
+            with patch("research_loop_kit.setup.files", return_value=package):
+                ensure_skills(root)
+            for family in (".agents", ".claude", ".gemini", ".opencode"):
+                self.assertEqual((root / family / "skills/example/SKILL.md").read_bytes(), text.encode("utf-8"))
