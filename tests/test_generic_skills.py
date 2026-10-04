@@ -34,7 +34,8 @@ class GenericSkillsTests(unittest.TestCase):
                         relative = resource.relative_to(source)
                         for family in (".agents", ".claude", ".gemini", ".opencode"):
                             copy = root / family / "skills" / name / relative
-                            self.assertEqual(copy.read_bytes(), resource.read_bytes())
+                            # 配置時はLFへ統一するため、Windows checkoutのCRLFとは内容で比較する。
+                            self.assertEqual(copy.read_text(encoding="utf-8"), resource.read_text(encoding="utf-8"))
                     reference = source / "references/contract.md"
                     if reference.is_file():
                         self.assertIn(reference.read_text(encoding="utf-8"), packet)

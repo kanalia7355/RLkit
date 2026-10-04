@@ -10,6 +10,7 @@ from .cli import main as loop_main
 from .config import LoopError, dump, read_json
 from .importing import preview
 from .sessions import Sessions
+from .setup import ensure_skills
 
 
 def hook(root, provider, payload):
@@ -70,6 +71,7 @@ def main(root, argv=None):
     args = parser.parse_args(argv)
     hub = Sessions(root)
     try:
+        ensure_skills(root)
         if args.action == "import-preview":
             result = preview(args.source, args.files)
         elif args.action == "import-study":
