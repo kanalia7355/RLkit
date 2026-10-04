@@ -20,6 +20,7 @@ from .guards import inspect_code, summarize_effects, verify_evidence, verify_rep
 from .prompts import render
 from .providers import invoke, process_run
 from .reporting import supporting_documents
+from .setup import ensure_skills
 from .store import Store, digest
 
 
@@ -34,6 +35,8 @@ class Engine:
     def __init__(self, root):
         self.store = Store(root)
         self.root = self.store.root
+        if self.store.path.is_file():
+            ensure_skills(self.root)
 
     def status(self):
         with self.store.transaction() as db:

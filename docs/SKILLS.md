@@ -41,3 +41,9 @@ skill-candidate-detector、experiment-review-panel、seed-power-advisor、multi-
 図生成、環境の自動再構築、専用ベンチマーク台帳、独立群・多群実験は実装済みとして扱いません。
 今後の製品拡張は[ROADMAP.md](ROADMAP.md)に、現行の動作検証は[VALIDATION.md](VALIDATION.md)に記載します。
 
+
+## 初回起動時の配置
+
+同梱スキルは `agent.py` の起動時（SessionStart hookを含む）にプロジェクト直下へ自動配置されます。既存の研究フォルダも、RLkit経由で開く際に不足するスキルが追加されます。利用者がスキル配置用のコマンドを実行する必要はありません。
+
+配置先は `.claude/skills/`、`.agents/skills/`、`.gemini/skills/`、`.opencode/skills/` です。既存のスキルディレクトリは上書きせず、同名スキルの更新は自動では行いません。CLIが起動中にスキル一覧を更新しない場合は、配置後にセッションを再起動してください。起動hookやAgent入口が実行されない環境では、フォルダを開くだけでは配置処理は走りません。

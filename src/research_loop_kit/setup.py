@@ -21,20 +21,7 @@ def initialize(root, overrides=None):
     write_new(root / "AGENT_GUIDE.md", instructions)
     for name in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
         write_new(root / name, "# Research Loop Kit\n\nこの研究の操作手順は `AGENT_GUIDE.md` を読んでください。\n")
-    skill_root = assets / "skills"
-
-    def copy_resources(source, target):
-        for item in source.iterdir():
-            if item.is_dir():
-                copy_resources(item, target / item.name)
-            else:
-                write_new(target / item.name, item.read_text(encoding="utf-8"))
-
-    for skill in skill_root.iterdir():
-        if not skill.is_dir():
-            continue
-        for family in (".agents", ".claude", ".gemini", ".opencode"):
-            copy_resources(skill, root / family / "skills" / skill.name)
+    ensure_skills(root)
     write_new(root / ".gitignore", ".rlk/\n.env\n.env.*\n__pycache__/\n*.pyc\n")
     write_new(
         root / "START_HERE.md",
@@ -55,3 +42,35 @@ def initialize(root, overrides=None):
     }
     Store(root).initialize(state)
     return str(root)
+
+
+def ensure_skills(root):
+    """起動先へ未配置の同梱スキルを追加する。既存スキルは変更しない。"""
+    from .fsutil import is_link
+
+    root = Path(root).resolve()
+    assets = files("research_loop_kit") / "assets/skills"
+
+    def copy_resources(source, target):
+        for item in source.iterdir():
+            if item.is_dir():
+                copy_resources(item, target / item.name)
+            else:
+                try:
+                    write_new(target / item.name, item.read_text(encoding="utf-8"))
+                except FileExistsError:
+                    pass
+
+    for family in (".agents", ".claude", ".gemini", ".opencode"):
+        parent = root / family
+        destination = parent / "skills"
+        if any(path.exists() and (is_link(path) or not path.is_dir()) for path in (parent, destination)):
+            continue
+        if parent.is_symlink() or destination.is_symlink():
+            continue
+        for skill in assets.iterdir():
+            if skill.is_dir():
+                target = destination / skill.name
+                if target.exists() or target.is_symlink():
+                    continue
+                copy_resources(skill, target)
